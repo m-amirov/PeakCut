@@ -103,13 +103,17 @@ PEAKCUT_AI_KEY=your-key-here
   tokens each video took.
 - Speech to text does not use the AI service. It runs on your own machine, so audio never leaves it.
 
-### Videos in Arabic
+### Videos in Arabic and Russian
 
 PeakCut hears English by default. To clip videos in Arabic, add the Arabic speech model once in
 **Settings → Speech models** (about 107 MB), or choose **Arabic** under Options when adding a video and PeakCut
 offers to download it. Set a creator's language on their Setup page so their live recordings use it too.
 It understands Modern Standard Arabic and everyday dialects, and the AI turns English words said in between
 back into English. Captions on the clips are in English.
+
+For Russian videos, add **Russian** in **Settings → Speech models** (about 465 MB), then choose Russian when
+adding a video or on a creator's Setup page for live recordings. Russian captions, hooks and post text stay in
+Cyrillic; mixed English game terms stay in Latin letters.
 
 ## Settings
 

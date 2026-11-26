@@ -23,7 +23,8 @@ HOOK = {"font": "Poppins ExtraBold", "size": 96, "ink": "14100E", "box": "FFFFFF
         "max_w": 900}
 # Urdu and Hindi in their own script: drawn with these whatever the style's font (its letters are Latin only), a
 # whole line at a time so the caption engine joins the letters and runs Urdu right to left
-SCRIPT_FONTS = {"ur": ("Noto Nastaliq Urdu", "NotoNastaliqUrdu-Bold.ttf", 1.3), "hi": ("Noto Sans Devanagari", "NotoSansDevanagari-Bold.ttf", 1.05)}
+SCRIPT_FONTS = {"ur": ("Noto Nastaliq Urdu", "NotoNastaliqUrdu-Bold.ttf", 1.3), "hi": ("Noto Sans Devanagari", "NotoSansDevanagari-Bold.ttf", 1.05),
+                "ru": ("Noto Sans", "NotoSans-Bold.ttf", 1.0)}
 FONT_FILES = {**templates.FONTS, **{n: f for n, f, _ in SCRIPT_FONTS.values()}}
 CAP_MAX_W = 960   # captions never run wider than this, whatever is said
 
@@ -313,11 +314,12 @@ def _round_box(x0, y0, x1, y1, r):
             f"l {n(x0)} {n(y0 + r)} b {n(x0)} {n(y0)} {n(x0)} {n(y0)} {n(x0 + r)} {n(y0)}")
 
 
-_SCRIPT_RANGES = {"ur": re.compile(r"[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]"), "hi": re.compile(r"[\u0900-\u097F]")}
+_SCRIPT_RANGES = {"ur": re.compile(r"[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]"), "hi": re.compile(r"[\u0900-\u097F]"),
+                  "ru": re.compile(r"[\u0400-\u04FF]")}
 
 
 def _in_script(text, script) -> bool:
-    """Is this text written (mostly) in the given script's own letters (Urdu or Devanagari)?"""
+    """Is this text written mostly in the given script's own letters?"""
     rx, letters = _SCRIPT_RANGES.get(script), [c for c in str(text or "") if c.isalpha()]
     return bool(rx and letters and sum(1 for c in letters if rx.match(c)) >= len(letters) / 2)
 

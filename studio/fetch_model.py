@@ -27,6 +27,8 @@ MODELS = {
            "Parakeet TDT 0.6b v2 by NVIDIA (CC-BY-4.0)", ""),
     "ar": ("Arabic", config.ASR_MODEL_AR, config.ASR_MODEL_AR_URL, 107,
            "FastConformer Arabic by NVIDIA (CC-BY-4.0)", config.ASR_MODEL_AR_SHA256),
+    "ru": ("Russian", config.ASR_MODEL_RU, config.ASR_MODEL_RU_URL, 465,
+           "Parakeet TDT 0.6b v3 by NVIDIA (CC-BY-4.0)", config.ASR_MODEL_RU_SHA256),
 }
 DEFAULT = "en"
 WAIT = 60   # seconds of silence from the connection before giving up, so a stalled download cannot hang everything

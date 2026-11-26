@@ -82,8 +82,8 @@ Rules:
 - Write hook, title, description, hashtags and highlight_words in the language the video is in, when that language
   is written in Latin letters (a Spanish video gets Spanish ones, a French video French ones), with its proper
   spelling and accents. If the video is in Hindi or Urdu, write them in Roman letters the way people type Hindi and
-  Urdu in chats (Hinglish: "yaar ye kya ho gaya"), never in Devanagari or Urdu script. For a language in another
-  script (Arabic, Russian, Japanese...), write them in English.
+  Urdu in chats (Hinglish: "yaar ye kya ho gaya"), never in Devanagari or Urdu script. If the video is in Russian,
+  write them in Russian Cyrillic. For other languages in another script (Arabic, Japanese...), write them in English.
 - category: one of funny, fail, clutch, rage, shock, take, story, other.
 - reason: one short sentence on why it works.
 {language}
@@ -156,7 +156,8 @@ _ANY_EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
 def hook_text(v) -> str:
     """The big text on the video, as the AI wrote it: a short sentence, not shouted, with at most one emoji from the
     list, at the end (any other emoji is dropped: only these are sure to be drawn on the video). Many have none."""
-    s = roman.to_roman(_text(v, 90))
+    raw = _text(v, 90)
+    s = raw if re.search(r"[\u0400-\u04FF]", raw) else roman.to_roman(raw)
     emoji = next((ch for ch in s if ch in HOOK_EMOJI), "")
     s = re.sub(r"\s{2,}", " ", _ANY_EMOJI.sub("", s)).strip(" .")
     letters = [ch for ch in s if ch.isalpha()]
@@ -194,12 +195,18 @@ def _tidy(c, s, e, game=None):
     return {
         "start": s, "end": e, "score": max(0, min(100, int(_num(c.get("score"))))),
         "category": cat if cat in CATEGORIES else "other",
-        "hook": hook_text(c.get("hook")), "title": roman.to_roman(_text(c.get("title"), 100)),
-        "description": roman.to_roman(_text(c.get("description"), 300)),
+        "hook": hook_text(c.get("hook")), "title": _screen_text(c.get("title"), 100),
+        "description": _screen_text(c.get("description"), 300),
         "hashtags": [t for t in tags if t][:8],
-        "highlight_words": [roman.to_roman(_text(h, 30)) for h in words][:8],
+        "highlight_words": [_screen_text(h, 30) for h in words][:8],
         "reason": _text(c.get("reason"), 200),
     }
+
+
+def _screen_text(v, limit: int) -> str:
+    """Keep Russian metadata in Cyrillic; retain the established Roman fallback for other scripts."""
+    text = _text(v, limit)
+    return text if re.search(r"[\u0400-\u04FF]", text) else roman.to_roman(text)
 
 
 def _same_word(old, new):
@@ -1026,7 +1033,7 @@ def listen(audio: tuple, pcm, dur: float, a: float, b: float, min_len: int, max_
 FIX_SCHEMA = {"type": "ARRAY", "items": {"type": "STRING"}}
 # Languages written in Latin letters keep the words that were said, in their own spelling (the caption fonts draw
 # them); Hindi and Urdu keep theirs too, in Roman letters (Hinglish). Every other language becomes English captions.
-KEEP_LANGS = ("en", "hi", "ur", "es", "pt", "fr", "de", "it", "nl", "pl", "tr", "ro", "sv", "no", "nb", "da", "fi", "cs", "sk", "hu",
+KEEP_LANGS = ("en", "hi", "ur", "ru", "es", "pt", "fr", "de", "it", "nl", "pl", "tr", "ro", "sv", "no", "nb", "da", "fi", "cs", "sk", "hu",
               "id", "ms", "tl", "ca", "hr", "sl", "et", "lv", "lt", "sq", "sw", "af", "eu", "gl", "is", "ga", "cy")
 
 
@@ -1049,7 +1056,7 @@ def _spread(text: str, s: float, e: float) -> list:
 # (in this order on the page). "rom": Hinglish, Urdu or Hindi in Roman letters with English mixed in, the way people
 # type it; "ur" and "hi": Urdu in its own (Nastaliq) script and Hindi in Devanagari.
 CAP_LANGS = {"rom": "Hinglish (Roman Urdu / Hindi)", "en": "English", "ur": "Urdu", "hi": "Hindi", "es": "Spanish",
-             "pt": "Portuguese", "fr": "French", "de": "German", "it": "Italian", "id": "Indonesian", "tr": "Turkish"}
+             "ru": "Russian", "pt": "Portuguese", "fr": "French", "de": "German", "it": "Italian", "id": "Indonesian", "tr": "Turkish"}
 SCRIPT_NOTE = {"rom": " Write it in Roman letters, the way people type Urdu or Hindi in chats (Hinglish), English words "
                       "they mix in staying English; never in Urdu or Devanagari script.",
                "ur": " Write it in Urdu script (as Urdu is written, right to left), never in Roman letters.",
@@ -1161,7 +1168,8 @@ def fix_caption_words(words: list, title: str = "", lang: str = "") -> list:
     """Captions ready to burn in: tidied by the AI, and Hindi or Urdu in Roman letters (Hinglish), never in their
     own script. The same words at the same moments: spelled differently, never translated. Any Hindi the AI did
     not turn into Roman letters (or all of it, with no AI) is spelled out by roman.py."""
-    return roman.words(_fix_caption_words(words, title, lang))
+    fixed = _fix_caption_words(words, title, lang)
+    return fixed if (lang or "").lower().split("-")[0] == "ru" else roman.words(fixed)
 
 
 def _fix_caption_words(words: list, title: str = "", lang: str = "") -> list:

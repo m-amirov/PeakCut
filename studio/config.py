@@ -141,6 +141,13 @@ ASR_MODEL_AR_URL = env("PEAKCUT_ASR_MODEL_AR_URL") or (
     f"3ae1fba562d68ce5299ea32659e5973cf464e034/{ASR_MODEL_AR}.tar.bz2")
 ASR_MODEL_AR_SHA256 = (env("PEAKCUT_ASR_MODEL_AR_SHA256")
                        or "033ac7d886b3a4f04f66f3b8959456d7f4aa28ad4dae9da96a9cc716448efff9").strip().lower()
+# Russian: NVIDIA Parakeet TDT v3, exported by sherpa-onnx. Downloaded only when requested.
+ASR_MODEL_RU = env("PEAKCUT_ASR_MODEL_RU", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8")
+ASR_MODEL_RU_URL = env("PEAKCUT_ASR_MODEL_RU_URL") or (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
+    f"{ASR_MODEL_RU}.tar.bz2")
+ASR_MODEL_RU_SHA256 = (env("PEAKCUT_ASR_MODEL_RU_SHA256")
+                       or "1495e91b59d7fc53ddca91f3431758ec99f8fa253fdb0e1e851be0f72b14b0f9").strip().lower()
 DATABASE_URL = env("DATABASE_URL") or f"sqlite:///{(DATA_DIR / 'peakcut.db').as_posix()}"
 # Commercials and "be right back" screens are stitched into streams. A clip taken from one is worthless, so those
 # seconds can be found and left out. It is off by default: it reads the whole video once, which is not free, and

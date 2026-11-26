@@ -28,6 +28,8 @@ out = brain.fix_caption_words(src, "test")
 check("without AI, Hindi captions come out in Roman letters", text(out) == "are chuna jo usko laga", text(out))
 check("...with every word at its own time", [(w["s"], w["e"]) for w in out] == [(w["s"], w["e"]) for w in src])
 check("short clips are spelled out too", text(brain.fix_caption_words(ws("जो उसको"), "")) == "jo usko")
+ru = ws("Привет всем это новый стрим")
+check("Russian captions stay in Cyrillic when no AI is available", text(brain.fix_caption_words(ru, "", "ru")) == "Привет всем это новый стрим", text(brain.fix_caption_words(ru, "", "ru")))
 out = text(brain.fix_caption_words(ws("یار یہ کیا ہے بھائی"), ""))
 check("without AI, Urdu captions come out in Roman letters too", out == "yaar ye kya hai bhai", out)
 check("Urdu punctuation and digits become plain ones", roman.to_roman("ہاں، ۱۰۰۰ روپے؟") == "haan, 1000 rupay?", roman.to_roman("ہاں، ۱۰۰۰ روپے؟"))
@@ -58,8 +60,8 @@ c = brain._tidy({"hook": "चूना लगा", "title": "उसको चू
 check("hook, title and highlighted words are in Roman letters", (c["hook"], c["title"], c["highlight_words"]) == ("Chuna laga", "usko chuna", ["chuna", "boss"]), str(c))
 
 # ---- the language rule: languages in Latin letters stay as said (Spanish stays Spanish); Hindi and Urdu stay too, in Roman letters; the rest become English
-check("which languages become English (Hindi and Urdu stay, in Roman letters)", [brain.needs_translation(x) for x in ("en", "en-US", "hi", "ur", "es", "pt-BR", "ar", "ja", "")]
-      == [False, False, False, False, False, False, True, True, False])
+check("which languages become English (Hindi and Urdu stay, in Roman letters; Russian stays Cyrillic)", [brain.needs_translation(x) for x in ("en", "en-US", "hi", "ur", "ru", "es", "pt-BR", "ar", "ja", "")]
+      == [False, False, False, False, False, False, False, True, True, False])
 def by_purpose(prompt, schema=None, purpose=""):
     if purpose == "Caption translation":
         n = int(prompt.split("Lines (")[1].split(")")[0])
@@ -79,6 +81,8 @@ check("Hindi stays Hindi, in Roman letters (Hinglish), never translated", text(o
 check("...each word on its own moment", [w["s"] for w in out] == [0.0, 0.5, 1.0, 1.5, 5.0, 5.5], str(out))
 out = brain.english_captions(hi_words, "hi", "", youtube_english=lambda: yt_en)
 check("...even when YouTube has English captions", text(out) == "yaar ye kya hai bhai chalo", text(out))
+out = brain.english_captions(ru, "ru", "", youtube_english=lambda: yt_en)
+check("Russian stays Cyrillic even when English captions are available", text(out) == "Привет всем это новый стрим", text(out))
 brain.ask_ai = no_ai
 ar = ws("مرحبا يا صديقي كيف حالك")
 out = brain.english_captions(ar, "ar", "", youtube_english=lambda: None)

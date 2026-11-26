@@ -67,12 +67,14 @@ def fake_open(url, timeout=None):
     return Answer(ARCHIVES[lang] + (b"changed" if lang in tampered else b""))
 
 
-# ---- the list of models, and where Arabic comes from
-check("English and Arabic are known", sorted(fetch_model.MODELS), ["ar", "en"])
+# ---- the list of models, and where Arabic and Russian come from
+check("English, Arabic and Russian are known", sorted(fetch_model.MODELS), ["ar", "en", "ru"])
 check("Arabic is downloaded from its own address, not English's", fetch_model.MODELS["ar"][2] != fetch_model.MODELS["en"][2], True)
 check("Arabic's address names one fixed version of the file, not the latest",
       fetch_model.MODELS["ar"][2], lambda u: "/resolve/main/" not in u and re.search(r"/resolve/[0-9a-f]{40}/", u))
 check("Arabic's fingerprint is known, so the download is checked", fetch_model.MODELS["ar"][5], lambda h: re.fullmatch(r"[0-9a-f]{64}", h))
+check("Russian is downloaded from its own checked sherpa-onnx archive", (fetch_model.MODELS["ru"][2], fetch_model.MODELS["ru"][5]),
+      lambda x: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2" in x[0] and bool(re.fullmatch(r"[0-9a-f]{64}", x[1])))
 mirror = subprocess.run([sys.executable, "-c", "from studio import fetch_model as f; print(f.MODELS['ar'][2]); print(f.MODELS['ar'][5])"],
                         env={**os.environ, "PEAKCUT_ASR_MODEL_AR_URL": "https://mirror.example/ar.tar.bz2"},
                         capture_output=True, text=True).stdout.split()
@@ -82,8 +84,8 @@ real_ar = fetch_model.MODELS["ar"]
 # From here on the stand-in archive is "the real file": its fingerprint is the one expected.
 fetch_model.MODELS["ar"] = real_ar[:5] + (hashlib.sha256(ARCHIVES["ar"]).hexdigest(),)
 fetch_model.urllib.request.urlopen = fake_open
-check("each language has its own folder", fetch_model.folder("ar") != fetch_model.folder("en"), True)
-check("nothing is here to begin with", (fetch_model.status("en"), fetch_model.status("ar")), ("missing", "missing"))
+check("each language has its own folder", (fetch_model.folder("ar") != fetch_model.folder("en"), fetch_model.folder("ru") != fetch_model.folder("en")), (True, True))
+check("nothing is here to begin with", (fetch_model.status("en"), fetch_model.status("ar"), fetch_model.status("ru")), ("missing", "missing", "missing"))
 
 # ---- Arabic is never downloaded unless someone asks
 try:
@@ -98,11 +100,17 @@ try:
 except RuntimeError as e:
     said = str(e)
 check("...and so does loading the model for transcribing", ("Speech models" in said, downloads), (True, []))
+try:
+    transcribe._new("ru")
+    said = ""
+except RuntimeError as e:
+    said = str(e)
+check("a video needing Russian says what to do instead of downloading", ("Speech models" in said, downloads), (True, []))
 
 # ---- the routes: list, download, remove
 r = c.get("/api/speech").json()["models"]
-check("the page lists both languages with their size", [(m["lang"], m["state"], m["size_mb"] > 0) for m in r],
-      [("en", "missing", True), ("ar", "missing", True)])
+check("the page lists all languages with their size", [(m["lang"], m["state"], m["size_mb"] > 0) for m in r],
+      [("en", "missing", True), ("ar", "missing", True), ("ru", "missing", True)])
 check("an unknown language is refused", c.post("/api/speech/xx", headers=ORIGIN).status_code, 400)
 check("another website cannot start a download", c.post("/api/speech/ar", headers={"Origin": "https://evil.example"}).status_code, 403)
 check("...and nothing was downloaded", downloads, [])
@@ -139,9 +147,11 @@ check("Arabic can be removed when nothing uses it", (c.delete("/api/speech/ar", 
 
 # ---- choosing the language
 check("a video can be marked as Arabic", jobs.clean_options({"lang": "ar"}), {"lang": "ar"})
+check("a video can be marked as Russian", jobs.clean_options({"lang": "ru"}), {"lang": "ru"})
 check("an unknown language becomes English", jobs.clean_options({"lang": "xx"}), {"lang": "en"})
 check("videos are English unless chosen", jobs.DEFAULTS["lang"], "en")
 check("a creator can speak Arabic", creators._clean({"lang": "ar"}), {"lang": "ar"})
+check("a creator can speak Russian", creators._clean({"lang": "ru"}), {"lang": "ru"})
 check("...but not a made-up language", creators._clean({"lang": "<b>"}), {"lang": "en"})
 r = c.post("/api/creators", json={"name": "Arabic speaker"}, headers=ORIGIN)
 cid = r.json()["id"]

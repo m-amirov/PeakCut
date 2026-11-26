@@ -53,6 +53,12 @@ check("Urdu captions are drawn with an Urdu font, a whole line at a time",
       "Noto Nastaliq Urdu" in ass and "یار {\c&H00F0FF&}یہ" in ass and "\pos(540," in ass, ass[-400:])
 hw = [{"w": w, "s": i * 0.5, "e": i * 0.5 + 0.4} for i, w in enumerate("यार यह क्या है".split())]
 check("Hindi captions are drawn with a Devanagari font", "Noto Sans Devanagari" in render.build_ass(hw, 0, 3, "", "bounce", [], 400, 1400, script="hi"))
+rw = [{"w": w, "s": i * 0.5, "e": i * 0.5 + 0.4} for i, w in enumerate("Привет всем это стрим".split())]
+ru_ass = render.build_ass(rw, 0, 3, "Он вытащил клатч", "bounce", [], 400, 1400, script="ru")
+check("Russian captions are drawn with a Cyrillic font", "Noto Sans" in ru_ass)
+check("a Russian hook uses the same Cyrillic font for its measured box", "\\fnNoto Sans" in ru_ass)
+check("Russian spoken captions select the Cyrillic renderer", jobs.caption_script("ru", "", rw, False), "ru")
+check("an explicit Russian caption translation selects the Cyrillic renderer", jobs.caption_script("en", "ru", rw, True), "ru")
 check("a language that isn't on the list changes nothing", brain.translate_captions(said, "xx")[0] == said)
 
 # the language is kept per video and per streamer

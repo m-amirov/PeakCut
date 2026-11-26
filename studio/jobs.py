@@ -735,6 +735,17 @@ def sources_of(creator_id, limit=8) -> list:
     return out[:limit]
 
 
+def caption_script(spoken: str, target: str, words: list, translated: bool) -> str:
+    """Choose the renderer for captions that stay in a script bundled with PeakCut."""
+    if target in ("hi", "ur") and words and translated:
+        return target
+    if target == "ru" and words and translated:
+        return "ru"
+    if spoken == "ru" and words and not target:
+        return "ru"
+    return ""
+
+
 def render_one(job, clip, words):
     d = Path(job["dir"])
     clip["status"] = "rendering"
@@ -773,7 +784,9 @@ def render_one(job, clip, words):
                 clip["hook"] = render.split_hook(clip["hook"])[0]
         heard = clip.get("heard")
         caps = shows(job, clip)[0] and clip.get("captions", True)     # the style shows captions, and they are not turned off
-        local = dict(clip, start=clip["start"] - off, end=clip["end"] - off, hook=roman.to_roman(clip.get("hook") or ""))
+        hook = clip.get("hook") or ""
+        local = dict(clip, start=clip["start"] - off, end=clip["end"] - off,
+                     hook=hook if re.search(r"[\u0400-\u04FF]", hook) else roman.to_roman(hook))
         span = [round(clip["start"], 2), round(clip["end"], 2), "en2"]      # "en2": captions made always-English
         if not caps:                           # a style without captions: no words, and no AI call for them
             raw = []
@@ -827,9 +840,10 @@ def render_one(job, clip, words):
                     pass
         # the last word on it: whatever was said, nothing is drawn in Hindi or Urdu script
         # (Urdu or Hindi asked for in their own script: drawn in it; any other language: never Hindi or Urdu script)
-        script = tl if tl in ("hi", "ur") and raw and clip.get("trans_for") == span + [tl] else ""
+        script = caption_script(spoken, tl, raw, clip.get("trans_for") == span + [tl])
         local.update(script=script, cap_lang=tl)
-        near = [dict(w, s=w["s"] - off, e=w["e"] - off) for w in (raw if script or not raw else roman.words(raw))]
+        keep_cyrillic = spoken == "ru" or tl == "ru"
+        near = [dict(w, s=w["s"] - off, e=w["e"] - off) for w in (raw if script or keep_cyrillic or not raw else roman.words(raw))]
         who = creators.get(job["creator"]) if job.get("creator") else None
         if who or job.get("campaign"):   # its campaign's hashtags first, the campaign's logo and small text on the video
             clip["hashtags"] = creators.with_tags(who, clip.get("hashtags"), job.get("campaign"))

@@ -1435,7 +1435,8 @@ def _run_job(job):
         try:
             found, ai = brain.find_clips(bw, db[s0: s0 + int((b - a) / 16000) + 1], (b - a) / 16000, job["title"],
                                          job["uploader"], quota, int(o["min_len"]), int(o["max_len"]), notes.append,
-                                         game=game, force=bool(o.get("force")), focus=o.get("focus", ""))
+                                         game=game, force=bool(o.get("force")), focus=o.get("focus", ""),
+                                         lang=job.get("lang") or o.get("lang", ""))
         except brain.NoAI as e:
             if not job["clips"]:
                 raise RuntimeError(f"No clips were made. {e}") from e

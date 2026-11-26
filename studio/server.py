@@ -1354,7 +1354,7 @@ def clip_write(jid: str, cid: str):
     usage.set_context(job.get("creator"), job.get("title") or "")
     try:
         return brain.post_text(jobs.spoken_in(job, clip), job.get("title") or "", job.get("uploader") or "",
-                               game=job.get("game") or None)
+                               game=job.get("game") or None, lang=job.get("lang") or (job.get("options") or {}).get("lang", ""))
     except ValueError as e:
         raise HTTPException(400, str(e))
     except RuntimeError as e:

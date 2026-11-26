@@ -1,6 +1,7 @@
 """Picks clip-worthy moments. The AI reads the timestamped transcript plus loudness marks."""
 import difflib
 import json
+import logging
 import math
 import re
 import time
@@ -10,6 +11,7 @@ import numpy as np
 from . import ai, config, games, usage, roman
 
 WINDOW_SEC, OVERLAP_SEC = 15 * 60, 60
+log = logging.getLogger(__name__)
 
 SCHEMA = {
     "type": "ARRAY",
@@ -207,6 +209,71 @@ def _screen_text(v, limit: int) -> str:
     """Keep Russian metadata in Cyrillic; retain the established Roman fallback for other scripts."""
     text = _text(v, limit)
     return text if re.search(r"[\u0400-\u04FF]", text) else roman.to_roman(text)
+
+
+_CYRILLIC = re.compile(r"[\u0400-\u04FF]")
+_LATIN = re.compile(r"[A-Za-z]")
+
+
+def metadata_valid(c: dict, lang: str = "") -> bool:
+    """Metadata must be usable, and Russian viewer-facing prose must really be Cyrillic."""
+    fields = ("hook", "title", "description", "reason")
+    if not isinstance(c, dict) or any(not _text(c.get(k), 300) for k in fields):
+        return False
+    if lang.lower().split("-", 1)[0] != "ru":
+        return True
+    text = " ".join(_text(c.get(k), 300) for k in fields)
+    cyr, latin = len(_CYRILLIC.findall(text)), len(_LATIN.findall(text))
+    # A few game names (CS2, AWP, Twitch) are normal; prose with no Cyrillic is English or transliteration.
+    return cyr >= 8 and cyr >= latin * 0.2
+
+
+def _language_note(lang: str) -> str:
+    if lang.lower().split("-", 1)[0] == "ru":
+        return ("\nThe source language and output language are Russian. Write hook, title, description and reason "
+                "in Russian Cyrillic. Keep legitimate English game names, nicknames and technical terms (CS2, AWP, "
+                "Twitch, Steam) unchanged. Never translate Russian speech into English or transliterate it.\n")
+    return ""
+
+
+METADATA_FIX = """The selected highlight, score, category and boundaries are already final. Repair ONLY the viewer-facing
+hook, title, description and reason below. Source and output language: Russian; use Cyrillic, never English or
+transliteration. Preserve genuine English game names, nicknames and technical terms. Do not invent events.
+
+Transcript:
+<transcript>
+{text}
+</transcript>
+
+Invalid metadata:
+{metadata}
+"""
+
+
+def _russian_fallback(c: dict, transcript: str) -> dict:
+    words = re.findall(r"[\u0400-\u04FF][\u0400-\u04FF-]*", transcript)
+    hook = " ".join(words[:7]).strip()
+    return {**c, "hook": hook[:64] if hook else "Лучший момент стрима", "title": "Лучший момент стрима",
+            "description": "Фрагмент русскоязычного стрима.", "reason": "Выбранный момент стрима."}
+
+
+def _metadata(c, s, e, game=None, lang="", transcript=""):
+    """Tidy one selected clip; one metadata-only repair never re-runs highlight selection."""
+    if lang.lower().split("-", 1)[0] == "ru" and not metadata_valid(c, lang):
+        log.info("Russian metadata repair requested")
+        try:
+            repaired, _m, _u = ask_ai(METADATA_FIX.format(text=_safe(transcript, 8000),
+                                      metadata=json.dumps(c, ensure_ascii=False)), purpose="Clip: Russian metadata repair",
+                                      temperature=0.0)
+            repaired = _first(repaired) or repaired
+            if isinstance(repaired, dict):
+                c = {**c, **{k: repaired.get(k, c.get(k)) for k in ("hook", "title", "description", "reason")}}
+        except Exception as exc:  # one bounded repair; a clip still renders when the provider is unavailable
+            log.info("Russian metadata repair unavailable: %s", type(exc).__name__)
+        if not metadata_valid(c, lang):
+            log.info("Russian metadata repair invalid; using deterministic fallback")
+            c = _russian_fallback(c, transcript)
+    return _tidy(c, s, e, game)
 
 
 def _same_word(old, new):
@@ -416,7 +483,7 @@ even if they are only mildly good. Still start on a full sentence and end after 
 
 
 def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=15, max_len=60, log=print, game=None,
-               force=False, focus=""):
+               force=False, focus="", lang=""):
     """The best moments of a video, picked by the AI. With force, it is asked to return its best moments instead of
     none. Raises NoAI when it could not be reached at all. `focus`: what the person clipping wants (a campaign's
     "what to look for"); `game`: the game being played, for its own rules and tags."""
@@ -438,7 +505,7 @@ def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=
         if len(chunk) < 3:
             continue
         prompt = (HEAD.format(title=_safe(title) or "unknown", uploader=_safe(uploader) or "unknown", n=per_window)
-                  + extra + (FORCE_NOTE.format(n=per_window) if force else "") + _focus(focus)
+                  + extra + (FORCE_NOTE.format(n=per_window) if force else "") + _focus(focus) + _language_note(lang)
                   + _rules(min_len, max_len, _fmt(chunk)))
         if force:
             prompt = prompt.replace("Skip weak moments. Fewer strong clips beat many weak ones. Return [] if nothing is worth clipping.",
@@ -461,7 +528,7 @@ def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=
             continue
         if _overlaps(s, e, clips):
             continue  # overlaps a better clip
-        clips.append(_tidy(c, s, e, game))
+        clips.append(_metadata(c, s, e, game, lang, _fmt(lines)))
         if len(clips) >= max_clips:
             break
     clips.sort(key=lambda c: c["start"])
@@ -507,7 +574,7 @@ def _one_prompt(intro, text, title, uploader, game=None):
             + _rules(0, 0, _safe(text, 8000)))
 
 
-def describe(text, title="", uploader="", game=None, timeout=None):
+def describe(text, title="", uploader="", game=None, timeout=None, lang=""):
     """Hook, title and post text for a clip the user cut by hand."""
     # never untitled: when the AI gives nothing back, the first words said (or the stream's title) name the clip
     said = " ".join(re.sub(r"\[[\d.\s:-]+\]", " ", text).split()[:8])
@@ -516,7 +583,7 @@ def describe(text, title="", uploader="", game=None, timeout=None):
              "highlight_words": [], "reason": "Clipped by hand."}
     if len(text.split()) < 4:
         return blank
-    prompt = _one_prompt("A streamer's viewer clipped this moment by hand.", text, title, uploader, game)
+    prompt = _one_prompt("A streamer's viewer clipped this moment by hand.", text, title, uploader, game) + _language_note(lang)
     try:
         out, _m, _u = ask_ai(prompt, purpose="Hand clip: title and hook", timeout=timeout)
         if not _first(out):
@@ -526,25 +593,25 @@ def describe(text, title="", uploader="", game=None, timeout=None):
                                  purpose="Hand clip: title and hook", timeout=timeout)
         if not _first(out):
             return blank
-        c = _tidy(_first(out), 0, 0, game)
+        c = _metadata(_first(out), 0, 0, game, lang, text)
         c["hook"] = c.get("hook") or blank["hook"]
         c["title"] = c.get("title") or blank["title"]
-        c["reason"] = "Clipped by hand."
+        c["reason"] = "Клип выбран вручную." if lang.lower().split("-", 1)[0] == "ru" else "Clipped by hand."
         return c
     except Exception:  # noqa: BLE001
         return blank
 
 
-def post_text(text, title="", uploader="", game=None):
+def post_text(text, title="", uploader="", game=None, lang=""):
     """A fresh title, description and hashtags for a clip that is already made, from what is said in it.
     Nothing is saved here: the person reads it and decides. Says plainly why when it can't.
     On a game stream the AI reads the same game rules as when the clip was found."""
     if len(text.split()) < 4:
         raise ValueError("Too few words are spoken in this clip for the AI to write about it. Write the post text yourself.")
     out, _m, _u = ask_ai(_one_prompt("Write the post text for this short clip. The person posting it will read it first.",
-                                     text, title, uploader, game), purpose="Clip: post text")
+                                     text, title, uploader, game) + _language_note(lang), purpose="Clip: post text")
     c = _first(out)
-    c = _tidy(c, 0, 0, game) if c else None
+    c = _metadata(c, 0, 0, game, lang, text) if c else None
     if not c or not (c["title"] or c["description"]):
         raise RuntimeError("The AI answered, but without a usable title or description. Try again.")
     return {k: c[k] for k in ("title", "description", "hashtags")}
@@ -626,14 +693,14 @@ SIG_SCHEMA = {
 
 
 def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_len=60, existing=(), n=2, must=False,
-                     game=None, timeout=None, focus=""):
+                     game=None, timeout=None, focus="", lang=""):
     """Judge 1: words only. Returns (clips, tokens)."""
     lines = make_lines(words)
     if len(lines) < 3:
         return [], 0
     prompt = (TRANSCRIPT_JUDGE.format(title=_safe(title) or "unknown", uploader=_safe(uploader) or "unknown", start=start, now=now,
                                       n=n, must=MUST_PICK if must else NOT_MUST)
-              + _game_rules(game) + _focus(focus)
+              + _game_rules(game) + _focus(focus) + _language_note(lang)
               + _rules(min_len, max_len, _fmt(lines)))
     out, _model, spent = ask_ai(prompt, purpose="Live: words judge", timeout=timeout)
     clips = []
@@ -641,7 +708,7 @@ def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_l
         s, e = _snap(c, lines, words, min_len, max_len, now)
         if e - s < min_len - 1 or _overlaps(s, e, list(existing) + clips):
             continue
-        clips.append(_tidy(c, s, e, game))
+        clips.append(_metadata(c, s, e, game, lang, _fmt(lines)))
     return clips, spent
 
 

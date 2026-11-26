@@ -22,6 +22,7 @@ body = (np.zeros(16000, dtype="<i2")).tobytes()
 H = {"authorization": "Bearer t", "x-lens": "16000"}
 
 transcribe.decode_pieces = lambda pieces, lang=None: [(["hi"], [0.1]) for _ in pieces]
+asr_worker.fetch_model.ready = lambda lang=None: True
 asr_worker._card_share = lambda: 0.40
 r = c.post("/decode", content=body, headers=H)
 check("a normal request is answered", (r.status_code, r.json()["pieces"][0]["tokens"]), (200, ["hi"]))

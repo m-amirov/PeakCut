@@ -121,6 +121,7 @@ class Gate:
             return await self.inner(scope, receive, send)
         req = Request(scope)
         path, method = scope["path"], scope["method"]
+        inner_receive, body_done = receive, True
 
         async def deny(status, msg, redirect=None):
             no_keep = {"Cache-Control": "private, no-store"}      # never kept by a browser or CDN
@@ -128,6 +129,7 @@ class Gate:
             await resp(scope, receive, send)
 
         if method not in ("GET", "HEAD", "OPTIONS"):
+            body_done = False
             if not _from_here(req):
                 return await deny(403, "Cross-site requests are not allowed.")
             # Only the upload may be big. Everything else is a small form, and is cut off at 256 KB whatever its
@@ -139,19 +141,50 @@ class Gate:
                 cap = 26 * 1024 * 1024          # a campaign's logo: a picture, a GIF or a short video (MAX_LOGO_MB)
             try:
                 if int(req.headers.get("content-length") or 0) > cap:
+                    # Uvicorn closes an HTTP/1.1 connection before flushing this response when the app returns
+                    # while the client is still sending its declared body. Discard it without keeping it in memory,
+                    # then send the usual refusal.
+                    while True:
+                        discarded = await receive()
+                        if discarded["type"] != "http.request" or not discarded.get("more_body"):
+                            break
                     return await deny(413, f"That file is too big. The limit is {config.MAX_UPLOAD_MB} MB." if path == "/api/upload"
                                       else "That logo is too big. The limit is 25 MB." if path.endswith("/logo") else "That request is too large.")
             except ValueError:
                 return await deny(400, "Bad request.")
-            seen, inner_receive = 0, receive
+            # Small API forms may arrive chunked without Content-Length. Read at most their normal 256 KB limit
+            # before handing them to FastAPI, so an over-limit stream can be fully discarded before its 413 response.
+            # Big uploads keep streaming straight to their own size-checked handlers.
+            if cap == 256 * 1024:
+                saved, seen = [], 0
+                while True:
+                    m = await receive()
+                    if m["type"] == "http.request":
+                        seen += len(m.get("body", b""))
+                        if seen > cap:
+                            while m.get("more_body"):
+                                m = await receive()
+                            return await deny(413, "That request is too large.")
+                    saved.append(m)
+                    if m["type"] != "http.request" or not m.get("more_body"):
+                        break
+
+                async def inner_receive():
+                    return saved.pop(0) if saved else {"type": "http.disconnect"}
+            else:
+                inner_receive = receive
+            seen, body_done = 0, False
 
             async def receive():
-                nonlocal seen
+                nonlocal seen, body_done
                 m = await inner_receive()
                 if m["type"] == "http.request":
                     seen += len(m.get("body", b""))
                     if seen > cap:
                         raise HTTPException(413, "That request is too large.")
+                    body_done = not m.get("more_body")
+                else:
+                    body_done = True
                 return m
 
         is_open = path in PAGES or any(path.startswith(p) for p in OPEN)
@@ -240,6 +273,18 @@ class Gate:
             await send(message)
 
         token = ctx._uid.set(user.id if user else None)
+        pending, defer_response = [], False
+
+        async def send_after_body(message):
+            nonlocal defer_response
+            # Keep a small upload error response until an unread request body has been drained. Sending it first
+            # lets Uvicorn close HTTP/1.1 before the client has finished writing the rejected upload piece.
+            if defer_response or (path.startswith("/api/upload/") and method not in ("GET", "HEAD", "OPTIONS") and not body_done):
+                defer_response = True
+                pending.append(message)
+            else:
+                await send_with_headers(message)
+
         try:
             if user and path == "/api/sync" and method == "GET":
                 # By far the most common request. When nothing of this user's changed it is answered right here:
@@ -247,8 +292,18 @@ class Gate:
                 quick = _sync_unchanged(req.query_params.get("v", ""))
                 if quick is not None:
                     return await JSONResponse(quick)(scope, receive, send_with_headers)
-            await self.inner(scope, receive, send_with_headers)
+            await self.inner(scope, receive, send_after_body)
         finally:
+            # Some routes reject an upload before FastAPI asks for its body (for example, a piece owned by another
+            # person). Uvicorn otherwise closes the HTTP/1.1 connection while the client is still writing it, so the
+            # client sees a reset instead of the intended 404. Drain the remaining stream without storing it first.
+            if method not in ("GET", "HEAD", "OPTIONS") and not body_done:
+                while True:
+                    discarded = await inner_receive()
+                    if discarded["type"] != "http.request" or not discarded.get("more_body"):
+                        break
+            for message in pending:
+                await send_with_headers(message)
             ctx._uid.reset(token)
 
 

@@ -9,6 +9,7 @@ os.environ.update(DATABASE_URL="", PEAKCUT_MAX_LIVE="20")
 sys.path.insert(0, ".")
 from studio import auth, config, creators, ctx, db, live, load
 db.init()
+live.transcribe.model_ready = lambda: True
 fails = []
 def check(n, got, want=True):
     ok = want(got) if callable(want) else got == want

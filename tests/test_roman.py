@@ -52,6 +52,10 @@ check("Urdu script becomes the AI's Roman spelling", text(brain.fix_caption_word
 spanish = ws("hola amigo que pasa")
 answers["now"] = ["Hola", "amigo,", "¿qué", "pasa?"]
 check("Spanish stays Spanish", text(brain.fix_caption_words(spanish, "")) == "Hola amigo, ¿qué pasa?")
+ru_spelling = ws("траектории головы прицел")
+answers["now"] = ["traektorii", "golovy", "pritsel"]
+check("a Russian caption fix cannot transliterate Cyrillic words", text(brain.fix_caption_words(ru_spelling, "", "ru")) == "траектории головы прицел",
+      text(brain.fix_caption_words(ru_spelling, "", "ru")))
 answers["now"] = ["one", "two"]
 check("an answer of the wrong length keeps the words, in Roman letters", text(brain.fix_caption_words(src, "")) == "are chuna jo usko laga")
 

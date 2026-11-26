@@ -1183,6 +1183,7 @@ def _fix_caption_words(words: list, title: str = "", lang: str = "") -> list:
         return words
     # The Hindi and Urdu rule is only given for those videos. On an English video it is one more thing a small
     # model can get wrong (turning English into something else).
+    russian = (lang or "").lower().split("-")[0] == "ru"
     hindi = (lang or "").lower().startswith(("hi", "ur")) or any(roman.needs_roman(w["w"]) for w in words)
     hinglish = ("If a word is Hindi or Urdu (in Devanagari or Urdu script, or already "
                 "in Roman letters), write that same word in Roman letters the way people type Hindi in chats (Hinglish): "
@@ -1209,7 +1210,10 @@ def _fix_caption_words(words: list, title: str = "", lang: str = "") -> list:
     fixed = []
     for w, new in zip(words, out):
         new = _CTRL.sub(" ", str(new or "")).strip()
-        if roman.needs_roman(w["w"]) and new and not roman.needs_roman(new):
+        if russian and re.search(r"[\u0400-\u04FF]", w["w"]) and new and not re.search(r"[\u0400-\u04FF]", new):
+            # Russian captions are written in Cyrillic. A Latin answer here is a transliteration, not a spelling fix.
+            new = w["w"]
+        elif roman.needs_roman(w["w"]) and new and not roman.needs_roman(new):
             # Hindi or Urdu spelled in Roman letters. Checked against the rule-made spelling where there is one, so a
             # translation ("lime" for चूना) is not taken for a spelling.
             if roman.has_hindi(w["w"]) and len(new.split()) <= 2 and not _same_word(roman.to_roman(w["w"]), new):

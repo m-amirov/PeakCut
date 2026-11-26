@@ -48,5 +48,69 @@ adskip.ensure = lambda: False
 check("without the relay, ffmpeg reads Twitch directly", adskip.prepare(cmd)[2] == UP)
 check("a command without Twitch is left as it is", adskip.prepare(["ffmpeg", "-i", "a.mp4"]) == ["ffmpeg", "-i", "a.mp4"])
 
+
+# Fragmented-MP4 Twitch playlists need their initialization segment.  Keep this
+# separate from the old MPEG-TS fixtures: the relay must preserve the HLS
+# semantics while it filters ads, not manufacture a version-3 playlist.
+def fmp4(seq, segs, map_uri="init.mp4", extra=""):
+    out = ["#EXTM3U", "#EXT-X-VERSION:6", "#EXT-X-TARGETDURATION:2", f"#EXT-X-MEDIA-SEQUENCE:{seq}",
+           f'#EXT-X-MAP:URI="{map_uri}"', extra]
+    for name, more in segs:
+        out += [*more, "#EXTINF:2.000,live", name]
+    return "\n".join(x for x in out if x) + "\n"
+
+
+UP3 = "https://video-weaver.fra05.hls.ttvnw.net/v1/playlist/fmp4.m3u8"
+adskip._streams.clear()
+out = adskip.relay(UP3, fmp4(1, [("one.m4s", [])]))
+check("fMP4 map and compatible version reach the relay", '#EXT-X-VERSION:6' in out and
+      '#EXT-X-MAP:URI="https://video-weaver.fra05.hls.ttvnw.net/v1/playlist/init.mp4"' in out and
+      out.index("#EXT-X-MAP") < out.index("https://video-weaver.fra05.hls.ttvnw.net/v1/playlist/one.m4s"), out)
+
+UPMAP = UP3.replace("fmp4", "map-range")
+adskip._streams.clear()
+out = adskip.relay(UPMAP, "\n".join(["#EXTM3U", "#EXT-X-VERSION:6", "#EXT-X-TARGETDURATION:2", "#EXT-X-MEDIA-SEQUENCE:1",
+                                      '#EXT-X-MAP:URI="init.mp4",BYTERANGE="720@0"', "#EXTINF:2.000,live", "one.m4s", ""]))
+check("an initialization map keeps its byte range", 'BYTERANGE="720@0"' in out, out)
+
+adskip._streams.clear()
+adskip.relay(UP3, fmp4(1, [("one.m4s", [])]))
+out = adskip.relay(UP3, "\n".join(["#EXTM3U", "#EXT-X-VERSION:6", "#EXT-X-TARGETDURATION:2", "#EXT-X-MEDIA-SEQUENCE:2",
+                                    "#EXTINF:2.000,live", "two.m4s", ""]))
+check("rolling fMP4 playlist keeps its active initialization map", "two.m4s" in out and out.count("#EXT-X-MAP") == 1, out)
+
+UP4 = UP3.replace("fmp4", "map-change")
+adskip._streams.clear()
+out = adskip.relay(UP4, fmp4(1, [("one.m4s", []), ("two.m4s", [])], "init-a.mp4") +
+                   fmp4(3, [("three.m4s", [])], "init-b.mp4"))
+check("a changed fMP4 initialization map stays with its later segments", out.count("#EXT-X-MAP") == 2 and
+      out.index("init-a.mp4") < out.index("one.m4s") < out.index("init-b.mp4") < out.index("three.m4s"), out)
+
+UP5 = UP3.replace("fmp4", "ranges")
+adskip._streams.clear()
+out = adskip.relay(UP5, fmp4(1, [("chunk.m4s", ["#EXT-X-BYTERANGE:100@0"]),
+                                 ("chunk.m4s", ["#EXT-X-BYTERANGE:100@100"])]))
+check("byte ranges are preserved and distinguish otherwise identical URIs", out.count("chunk.m4s") == 2 and
+      "#EXT-X-BYTERANGE:100@0" in out and "#EXT-X-BYTERANGE:100@100" in out, out)
+
+UP5B = UP3.replace("fmp4", "implicit-ranges")
+adskip._streams.clear()
+out = adskip.relay(UP5B, fmp4(1, [("chunk.m4s", ["#EXT-X-BYTERANGE:100@0"]),
+                                  ("chunk.m4s", ["#EXT-X-BYTERANGE:100"]),
+                                  ("chunk.m4s", ["#EXT-X-BYTERANGE:100"])]))
+check("implicit byte ranges use the previous offset for deduplication", out.count("chunk.m4s") == 3 and
+      "#EXT-X-BYTERANGE:100\n" in out, out)
+
+UP6 = UP3.replace("fmp4", "discontinuity")
+adskip._streams.clear()
+out = adskip.relay(UP6, fmp4(1, [("one.m4s", []), ("two.m4s", ["#EXT-X-DISCONTINUITY"])]))
+check("source discontinuities are preserved", out.count("#EXT-X-DISCONTINUITY") == 1, out)
+
+try:
+    adskip.relay(UP3.replace("fmp4", "iframes"), "#EXTM3U\n#EXT-X-I-FRAMES-ONLY\n#EXT-X-VERSION:4\n")
+    check("unsupported I-frame-only playlist is refused", False)
+except ValueError as e:
+    check("unsupported I-frame-only playlist is refused", "I-frame-only" in str(e), str(e))
+
 print("\nALL PASS" if not fails else f"\n{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

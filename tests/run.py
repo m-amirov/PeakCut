@@ -82,6 +82,7 @@ def main() -> int:
                 ("a campaign posts its clips by itself: score, gap, daily limit", ["tests/test_campaign_autopost.py"]),
                 ("templates: ready-made and own, picked per video or streamer, old looks kept", ["tests/test_templates.py"]),
                 ("Twitch ads are left out of recordings", ["tests/test_adskip.py"]),
+                ("the Twitch relay keeps fMP4 playlists decodable", ["tests/test_adskip_fmp4_decode.py"]),
                 ("a YouTube post is posted once YouTube has processed it", ["tests/test_youtube_processing.py"]),
                 ("caption language: picked per video or streamer, translated line by line in sync", ["tests/test_caption_lang.py"]),
                 ("a style without captions or heading: never asked of the AI", ["tests/test_style_parts.py"]),

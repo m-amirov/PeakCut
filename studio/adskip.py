@@ -49,13 +49,21 @@ def _when(s):
         return None
 
 
+def _absolute_uri_attr(line: str, base: str) -> str:
+    """Make a URI= attribute usable from the relay's own playlist address."""
+    return re.sub(r'(URI=")([^"]+)(")', lambda m: m.group(1) + urllib.parse.urljoin(base, m.group(2)) + m.group(3), line)
+
+
 def parse(text: str, base: str = "") -> tuple:
-    """(target duration, ended, [segments]) of a media playlist; each segment {uri, dur, ad, lines}."""
-    ads, segs, cur, target, ended = [], [], [], 2, False
+    """(target duration, ended, [segments]) of a media playlist; each segment keeps its HLS requirements."""
+    ads, segs, cur, target, ended, version, active_map = [], [], [], 2, False, 3, None
+    last_range_uri, last_range_end = "", None
     for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
+        if line.startswith("#EXT-X-I-FRAMES-ONLY"):
+            raise ValueError("unsupported HLS playlist: I-frame-only")
         if line.startswith("#EXT-X-DATERANGE"):
             a = _attrs(line)
             if a.get("CLASS") == "twitch-stitched-ad" or a.get("ID", "").startswith("stitched-ad"):
@@ -71,9 +79,16 @@ def parse(text: str, base: str = "") -> tuple:
                 target = int(float(line.split(":", 1)[1]))
             except ValueError:
                 pass
+        elif line.startswith("#EXT-X-VERSION:"):
+            try:
+                version = max(3, int(line.split(":", 1)[1]))
+            except ValueError:
+                pass
+        elif line.startswith("#EXT-X-MAP:"):
+            active_map = _absolute_uri_attr(line, base)
         elif line.startswith("#EXT-X-ENDLIST"):
             ended = True
-        elif line.startswith(("#EXTINF", "#EXT-X-PROGRAM-DATE-TIME", "#EXT-X-DISCONTINUITY")):
+        elif line.startswith(("#EXTINF", "#EXT-X-PROGRAM-DATE-TIME", "#EXT-X-DISCONTINUITY", "#EXT-X-BYTERANGE")):
             cur.append(line)
         elif not line.startswith("#"):
             info = next((x for x in cur if x.startswith("#EXTINF")), "#EXTINF:2.0,")
@@ -83,8 +98,26 @@ def parse(text: str, base: str = "") -> tuple:
             except ValueError:
                 dur = 2.0
             pdt = next((_when(x.split(":", 1)[1]) for x in cur if x.startswith("#EXT-X-PROGRAM-DATE-TIME")), None)
+            uri = urllib.parse.urljoin(base, line)
+            byte_range = next((x.split(":", 1)[1] for x in cur if x.startswith("#EXT-X-BYTERANGE")), "")
+            range_key = byte_range
+            if byte_range:
+                try:
+                    length, _, start = byte_range.partition("@")
+                    offset = int(start) if start else last_range_end if last_range_uri == uri else None
+                    if offset is not None:
+                        range_key = f"{int(length)}@{offset}"
+                        last_range_end = offset + int(length)
+                    else:
+                        last_range_end = None
+                    last_range_uri = uri
+                except ValueError:
+                    last_range_uri, last_range_end = "", None
+            else:
+                last_range_uri, last_range_end = "", None
             segs.append({"uri": urllib.parse.urljoin(base, line), "dur": dur, "title": title, "pdt": pdt,
-                         "lines": [x for x in cur if not x.startswith("#EXT-X-DISCONTINUITY")]})
+                         "map": active_map, "version": version, "lines": list(cur),
+                         "range": range_key})
             cur = []
     for s in segs:
         s["ad"] = "amazon" in s["title"].lower() or (s["pdt"] is not None and any(a <= s["pdt"] < b for a, b in ads))
@@ -97,12 +130,16 @@ def relay(upstream: str, text: str) -> str:
     target, ended, segs = parse(text, upstream)
     with _lock:
         st = _streams.setdefault(upstream, {"next": 0, "kept": collections.deque(maxlen=KEEP), "seen": collections.OrderedDict(),
-                                            "gap": False, "t": 0.0})
+                                            "gap": False, "t": 0.0, "map": None, "version": 3})
         st["t"] = time.time()
         for s in segs:
-            if s["uri"] in st["seen"]:
+            s["map"] = s.get("map") or st["map"]
+            st["map"] = s["map"]
+            st["version"] = max(st["version"], s.get("version", 3))
+            key = (s["uri"], s.get("range", ""))
+            if key in st["seen"]:
                 continue
-            st["seen"][s["uri"]] = True
+            st["seen"][key] = True
             while len(st["seen"]) > 400:
                 st["seen"].popitem(last=False)
             if s["ad"]:
@@ -115,11 +152,15 @@ def relay(upstream: str, text: str) -> str:
         kept = list(st["kept"])
         for k in [k for k, v in _streams.items() if time.time() - v["t"] > 900]:       # streams nobody reads any more
             _streams.pop(k, None)
-    out = ["#EXTM3U", "#EXT-X-VERSION:3", f"#EXT-X-TARGETDURATION:{max(target, 1)}",
+    out = ["#EXTM3U", f"#EXT-X-VERSION:{st['version']}", f"#EXT-X-TARGETDURATION:{max(target, 1)}",
            f"#EXT-X-MEDIA-SEQUENCE:{kept[0][0] if kept else 0}"]
+    emitted_map = None
     for _, s, gap in kept:
         if gap:
             out.append("#EXT-X-DISCONTINUITY")
+        if s.get("map") and s["map"] != emitted_map:
+            out.append(s["map"])
+            emitted_map = s["map"]
         out += s["lines"]
         out.append(s["uri"])
     if ended:

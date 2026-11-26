@@ -214,6 +214,7 @@ class Session:
         self.facecam_box = None       # where the webcam is, found once the first clip is made
         self.facecam_checked = False  # the look is made once, even when it finds nothing
         self.ai_busy = 0.0            # when the AI check now running was started, 0 when none is
+        self.diagnostics = []         # opt-in, bounded local highlight-evaluation records
 
     def _ask_ai(self, window=None, why=None):
         """Ask the AI on its own thread, so a slow answer never stops the recording.
@@ -714,6 +715,60 @@ class Session:
             self.last_spike = n
             self.spikes += 1
 
+    DIAGNOSTIC_LIMIT = 200
+    DIAGNOSTIC_MEDIA_LIMIT = 12
+
+    def _diagnostic(self, row):
+        """Keep a small local audit trail; never retain chat text, identities, cookies, or keys."""
+        if not self.settings.get("highlight_diagnostics"):
+            return
+        row["n"] = (self.diagnostics[-1].get("n", 0) + 1) if self.diagnostics else 1
+        self.diagnostics.append(row)
+        del self.diagnostics[:-self.DIAGNOSTIC_LIMIT]
+        try:
+            (self.dir / "highlight-diagnostics.json").write_text(
+                json.dumps(self.diagnostics, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        except OSError:
+            pass
+
+    @staticmethod
+    def _signal_summary(z, chat):
+        return {"loudness": {"min": round(float(np.min(z)), 2) if len(z) else None,
+                             "max": round(float(np.max(z)), 2) if len(z) else None,
+                             "mean": round(float(np.mean(z)), 2) if len(z) else None},
+                "chat": {"total": int(sum(chat)) if chat else 0, "peak": int(max(chat)) if chat else 0}}
+
+    def _diagnostic_media(self, start, end, label):
+        """Copy only a bounded, opted-in source fragment while it is still in the rolling buffer."""
+        if not (self.settings.get("highlight_diagnostics") and self.settings.get("diagnostic_save_media")):
+            return None
+        with self.lock:
+            segs = [s for s in self.segments if s[2] > start - PAD and s[1] < end + PAD and s[0].exists()]
+        if not segs:
+            return None
+        folder = self.dir / "diagnostics"
+        try:
+            folder.mkdir(exist_ok=True)
+            files = sorted(folder.glob("*.ts"), key=lambda p: p.stat().st_mtime)
+            for old in files[:-self.DIAGNOSTIC_MEDIA_LIMIT + 1]:
+                old.unlink(missing_ok=True)
+            name = f"{int(start):07d}-{label[:12]}.ts"
+            out, listing = folder / name, folder / (name + ".txt")
+            listing.write_text("".join(f"file '{p.as_posix()}'\n" for p, _, _ in segs), encoding="utf-8")
+            media.run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(out)])
+            listing.unlink(missing_ok=True)
+            return str(out.relative_to(self.dir))
+        except Exception:  # noqa: BLE001 - evidence capture must not affect the live recording
+            return None
+
+    def _attach_diagnostic_media(self, candidates):
+        if not self.settings.get("diagnostic_save_media"):
+            return
+        for n, candidate in enumerate(candidates[:2], 1):
+            path = self._diagnostic_media(candidate.get("start", 0), candidate.get("end", 0), f"candidate-{n}")
+            if path:
+                candidate["source_fragment"] = path
+
     def _ai_check(self, window=None, why=None):
         """Judge 1 reads only the words. If it finds a moment, judge 2 reads only the loudness and chat activity
         for the same stretch, without seeing the words. A clip is made when both say yes (or as set in Setup)."""
@@ -733,29 +788,41 @@ class Session:
         last_clip = max((c.get("made_at", 0) for c in self.job["clips"]), default=self.started_at)
         must = st["must_clip_min"] > 0 and time.time() - last_clip >= st["must_clip_min"] * 60
         verdict = {"t": round(now), "transcript": None, "reaction": None, "trigger": why}
+        words_ai, reaction_ai = {}, {}
+        diag = {"window": {"start": round(ws, 2), "end": round(now, 2)}, "trigger": why or "interval",
+                "transcript": [{"s": round(w["s"], 2), "e": round(w["e"], 2), "w": str(w["w"])[:80]} for w in win[:400]],
+                "words": [], "reaction": [], "shadow": {"reaction": [], "borderline": []}, "ai": {}, "result": ""}
         if len(win) < 8:
             self.skipped += 1
+            diag["result"] = "skipped: nobody talking"; self._diagnostic(diag)
             return self._verdict(verdict, "Skipped: nobody talking")
         if len(recent) >= st["live_per_hour"] and not must:
             self.skipped += 1
+            diag["result"] = "skipped: hourly limit"; self._diagnostic(diag)
             return self._verdict(verdict, f"Skipped: {st['live_per_hour']} clips this hour already")
         usage.set_context(self.job["creator"], self.job["title"] or "Live stream")
         title, up = self.job["title"], self.job["uploader"]
         try:
             cands, tok = brain.judge_transcript(win, ws, now, title, up, st["min_len"], st["max_len"], self.job["clips"],
-                                                n=1 if every <= 2 else 2, must=must, focus=st.get("focus", ""),
-                                                game=self._game(), timeout=config.LIVE_AI_TIMEOUT,
-                                                lang=self.job.get("lang") or (self.job.get("options") or {}).get("lang", ""))  # Auto (0) asks for one
+                                                 n=1 if every <= 2 else 2, must=must, focus=st.get("focus", ""),
+                                                 game=self._game(), timeout=config.LIVE_AI_TIMEOUT,
+                                                 lang=self.job.get("lang") or (self.job.get("options") or {}).get("lang", ""), audit=words_ai)  # Auto (0) asks for one
         except Exception as e:  # noqa: BLE001
             self.job["ai"]["last_error"] = str(e)[-200:]
+            diag["result"] = "words error"; self._diagnostic(diag)
             return self._verdict(verdict, "AI error: " + str(e)[-80:])
         self.checks += 1
         self.tokens += tok
+        diag["ai"]["words"] = words_ai or {"tokens": tok}
+        diag["words"] = [{"start": c["start"], "end": c["end"], "score": c["score"], "reason": c.get("reason", "")} for c in cands]
         # a forced pick (no clip for a while) still has to be a real moment: decent, and with people talking in it
         talk = lambda c: sum(1 for w in win if c["start"] <= w["s"] <= c["end"])          # noqa: E731
         keep = [c for c in cands if c["score"] >= st["min_score"] or (must and c["score"] >= self.FORCED_MIN and talk(c) >= 20)]
         verdict["transcript"] = max((c["score"] for c in cands), default=0)
-        if not keep:
+        # A strong automatic spike may be evaluated in shadow even when the words judge found no passing candidate.
+        shadow = bool(self.settings.get("highlight_diagnostics") and why and (not keep or any(60 <= c["score"] < st["min_score"] for c in cands)))
+        if not keep and not shadow:
+            diag["result"] = "rejected: words judge"; self._diagnostic(diag)
             return self._verdict(verdict, "Words judge: nothing clip-worthy")
         z = brain.loud_zscore(np.array(self.db, dtype=np.float32))
         lo, hi = int(ws), int(now) + 1
@@ -767,12 +834,26 @@ class Session:
             chat = [self.chat.get(t, 0) for t in range(lo, hi)] if (self.chat_on or self.chat_total) else None
             unit = "messages"
         try:
-            sig, tok2 = brain.judge_signals(z[lo:hi], chat, lo, now, unit=unit, timeout=config.LIVE_AI_TIMEOUT)
+            sig, tok2 = brain.judge_signals(z[lo:hi], chat, lo, now, unit=unit, timeout=config.LIVE_AI_TIMEOUT, audit=reaction_ai)
             self.checks += 1
             self.tokens += tok2
         except Exception as e:  # noqa: BLE001
             sig = []
             self.job["ai"]["last_error"] = str(e)[-200:]
+        diag["signals"] = self._signal_summary(z[lo:hi], chat)
+        diag["ai"]["reaction"] = reaction_ai or {"tokens": tok2 if "tok2" in locals() else 0}
+        diag["reaction"] = [dict(m) for m in sig]
+        if shadow:
+            # These are review candidates only. Noise or a reaction by itself can never queue a production clip.
+            diag["shadow"]["reaction"] = [dict(m) for m in sig if m["score"] >= 50 and not any(
+                m["end"] >= c["start"] - 10 and m["start"] <= c["end"] + 10 for c in keep)]
+            diag["shadow"]["borderline"] = [dict(c) for c in cands if 60 <= c["score"] < st["min_score"]]
+            for item in diag["shadow"]["reaction"] + diag["shadow"]["borderline"]:
+                item["deduplication"] = "review candidate"
+        if not keep:
+            self._attach_diagnostic_media(diag["shadow"]["reaction"] + diag["shadow"]["borderline"])
+            diag["result"] = "shadow only: words below threshold"; self._diagnostic(diag)
+            return self._verdict(verdict, "Words judge: nothing clip-worthy")
         added = 0
         for c in keep:
             match = [m for m in sig if m["end"] >= c["start"] - 10 and m["start"] <= c["end"] + 10 and m["score"] >= 50]
@@ -797,6 +878,9 @@ class Session:
             must = False
             if added >= (1 if every <= 2 else 2):
                 break
+        diag["result"] = "accepted" if added else "rejected: reaction or dedup"
+        self._attach_diagnostic_media(diag["words"])
+        self._diagnostic(diag)
 
     def _verdict(self, v, result):
         self.verdicts.append(dict(v, result=result))

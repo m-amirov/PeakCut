@@ -262,6 +262,29 @@ for words_, score, want, name in ((sparse, 45, 0, "a weak forced pick (45) is no
     sf._ai_check(window=(0.0, 60.0))
     check(name, len(made), want)
 
+# ---- optional highlight diagnostics observe extra reaction candidates but never change the live picker
+(d / "diag").mkdir()
+diag = live.Session(dict(job, id="diag", dir=str(d / "diag"), clips=[], source={"url": "https://www.youtube.com/@x/live", "name": "x"},
+                        title="t", uploader="u", creator=None),
+                    {**st, "must_clip_min": 0, "highlight_diagnostics": True})
+diag.words = talky
+diag.db = [-30.0] * 70
+diag.chat = __import__("collections").Counter({65: 8, 66: 8})
+diag.chat_total = 16
+made = []
+diag._add_clip = lambda c: made.append(c)
+live.brain.judge_transcript = lambda *a, **k: ([dict(start=5.0, end=35.0, score=65, hook="h", title="t", description="", hashtags=[], reason="r", category="other")], 10)
+reaction_calls = []
+live.brain.judge_signals = lambda *a, **k: (reaction_calls.append(1) or ([{"start": 42.0, "end": 57.0, "score": 82, "reason": "shout"}], 9))
+diag._ai_check(window=(0.0, 60.0), why="loudness +200%")
+check("shadow reaction candidate is recorded but does not make a clip", (len(made), len(reaction_calls), len(diag.diagnostics)), (0, 1, 1))
+row = diag.diagnostics[-1]
+check("borderline words and independent reaction stay separate diagnostic candidates", (row["words"][0]["score"], row["shadow"]["reaction"][0]["start"], row["shadow"]["borderline"][0]["start"]), (65, 42.0, 5.0))
+check("diagnostics retain no chat messages or user identifiers", ("chat_messages" in str(row), "u_local" in str(row)), (False, False))
+diag.diagnostics = [{"n": n} for n in range(diag.DIAGNOSTIC_LIMIT)]
+diag._diagnostic({"window": {"start": 0, "end": 1}})
+check("diagnostic rolling history is bounded", len(diag.diagnostics), diag.DIAGNOSTIC_LIMIT)
+
 # ---- the last pass: the captions proofread as one passage, every word kept on its own moment
 said = [{"w": t, "s": i * 0.5, "e": i * 0.5 + 0.4} for i, t in enumerate("he pulled all those bobs over here".split())]
 reply = {}

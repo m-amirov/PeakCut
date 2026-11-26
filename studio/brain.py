@@ -340,7 +340,7 @@ def retry_wait(e, attempt, timeout=None):
     return min(float(wait), LIVE_MAX_WAIT if timeout else MAX_WAIT)
 
 
-def ask_ai(prompt, schema=None, purpose="AI call", timeout=None, audio=None, temperature=0.4, cheap=False, images=None):
+def ask_ai(prompt, schema=None, purpose="AI call", timeout=None, audio=None, temperature=0.4, cheap=False, images=None, audit=None):
     """Try each model in order, with retries for rate limits and overloads (see retry_wait).
     Returns (the answer, the model that gave it, tokens used) and notes the tokens in the usage record.
 
@@ -375,6 +375,8 @@ def ask_ai(prompt, schema=None, purpose="AI call", timeout=None, audio=None, tem
                 continue
             usage.record(sent, wrote, purpose)
             ai.clear_problem()
+            if audit is not None:
+                audit.update(model=model, input_tokens=sent, output_tokens=wrote, tokens=sent + wrote)
             return out, model, sent + wrote
     ai.note_problem(last)
     _provider_trouble(last)
@@ -693,7 +695,7 @@ SIG_SCHEMA = {
 
 
 def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_len=60, existing=(), n=2, must=False,
-                     game=None, timeout=None, focus="", lang=""):
+                     game=None, timeout=None, focus="", lang="", audit=None):
     """Judge 1: words only. Returns (clips, tokens)."""
     lines = make_lines(words)
     if len(lines) < 3:
@@ -702,7 +704,10 @@ def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_l
                                       n=n, must=MUST_PICK if must else NOT_MUST)
               + _game_rules(game) + _focus(focus) + _language_note(lang)
               + _rules(min_len, max_len, _fmt(lines)))
-    out, _model, spent = ask_ai(prompt, purpose="Live: words judge", timeout=timeout)
+    began = time.monotonic()
+    out, model, spent = ask_ai(prompt, purpose="Live: words judge", timeout=timeout, audit=audit)
+    if audit is not None:
+        audit.update(model=model, tokens=spent, latency_ms=round((time.monotonic() - began) * 1000))
     clips = []
     for c in sorted(_items(out), key=lambda c: -_num(c.get("score"))):
         s, e = _snap(c, lines, words, min_len, max_len, now)
@@ -712,7 +717,7 @@ def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_l
     return clips, spent
 
 
-def judge_signals(z, chat, start, now, unit="messages", timeout=None):
+def judge_signals(z, chat, start, now, unit="messages", timeout=None, audit=None):
     """Judge 2: loudness and chat activity only, no words. z and chat are per second from `start`.
     `unit` says whether the chat numbers are messages or people. Returns (moments, tokens)."""
     rows = []
@@ -732,7 +737,10 @@ def judge_signals(z, chat, start, now, unit="messages", timeout=None):
         "\nChat is not available for this stream.",
         chat_hint=f"a burst of {word} right after something happened, " if has_chat else "",
         start=start, now=now, lines="\n".join(rows))
-    out, _model, spent = ask_ai(prompt, SIG_SCHEMA, purpose="Live: reaction judge", timeout=timeout)
+    began = time.monotonic()
+    out, model, spent = ask_ai(prompt, SIG_SCHEMA, purpose="Live: reaction judge", timeout=timeout, audit=audit)
+    if audit is not None:
+        audit.update(model=model, tokens=spent, latency_ms=round((time.monotonic() - began) * 1000))
     moments = [{"start": _num(m.get("start")), "end": _num(m.get("end")), "score": int(_num(m.get("score"))),
                 "reason": str(m.get("reason", ""))} for m in _items(out)
                if _num(m.get("start"), -1) >= 0 and _num(m.get("end"), -1) > 0]

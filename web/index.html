@@ -5587,7 +5587,7 @@ function tplCtl() {
   const colors = (path, label) => { const cur = path.split(".").reduce((o, k) => o[k], E.look);
     return `<div class="tpe-row"><span>${label}</span><div class="tpe-sw">${TPL_COLORS.map(x => `<button type="button" class="swc${x === cur ? " on" : ""}" style="background:#${x}" data-tf="${path}" data-v="${x}" aria-label="#${x}"></button>`).join("")}
       <label class="swc any" title="Any colour"><input type="color" data-tc="${path}" value="#${cur}"></label></div></div>`; };
-  const range = (path, label, min, max, val, fmt) => `<div class="tpe-row"><span>${label}</span><div class="tpe-rng"><input type="range" min="${min}" max="${max}" value="${val}" data-tr="${path}"><b>${fmt(val)}</b></div></div>`;
+  const range = (path, label, min, max, val, fmt, step = 1) => `<div class="tpe-row"><span>${label}</span><div class="tpe-rng"><input type="range" min="${min}" max="${max}" step="${step}" value="${val}" data-tr="${path}"><b>${fmt(val)}</b></div></div>`;
   const toggle = (path, label, on) => `<label class="tpe-row tpe-tog"><span>${label}</span><input type="checkbox" class="sw-tog" data-tt="${path}"${on ? " checked" : ""}></label>`;
   const place = (path, v) => `<div class="tpe-row"><span>Place</span><div class="tpe-place"><b>${v == null ? "Automatic" : `${Math.round(v)}% down`}</b>${v == null ? "" : `<button type="button" class="btn sm ghost" data-act="tplauto" data-k="${path}">Automatic</button>`}</div></div>`;
   const fonts = path => { const cur = path.split(".").reduce((o, k) => o[k], E.look);
@@ -5625,6 +5625,7 @@ function tplCtl() {
       <div class="tpe-sec"><h4>Colours</h4>${colors("hook.color", "Text")}${toggle("hook.bg", "Box behind the heading", h.bg)}${h.bg ? colors("hook.bgc", "Box colour") : ""}
         ${range("hook.outline", "Outline", 0, 14, h.outline ?? (h.bg ? 0 : 6), v => v ? v : "None")}</div>
       <div class="tpe-sec"><h4>Size and letters</h4>${range("hook.size", "Size", 60, 160, h.size || 96, v => v < 85 ? "Small" : v < 115 ? "Medium" : "Large")}${toggle("hook.upper", "Capital letters", !!h.upper)}</div>
+      <div class="tpe-sec"><h4>Timing</h4>${range("hook.duration", "Show for", 1, 8, h.duration ?? 2.5, v => Number(v).toFixed(1) + " seconds", .5)}</div>
       <div class="tpe-sec"><h4>Place</h4>${place("hook.y", h.y)}</div>` : ""}`;
   } else {
     const lay = Object.entries(S.tpl.layouts || {}).map(([k, l]) => tile("layout", k, `${tplPrev({...E.look, layout: k, hook: {...E.look.hook, show: false}, cap: {...c, y: null}}, {mini: true})}<em>${esc(l)}</em>`, E.look.layout === k)).join("");

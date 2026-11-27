@@ -26,7 +26,8 @@ MAX_OWN = 30
 _CAP = {"show": True, "anim": "pop", "font": "Poppins ExtraBold", "color": "FFFFFF", "hi": "FFF000", "key": "FFFFFF", "outline": 7,
         "shadow": False, "size": 132, "per": 3, "upper": True, "pop": 112, "y": None, "bg": False, "bgc": "000000"}
 # the heading: its font, text colour, and the rounded box behind it (on or off, and its colour)
-_HOOK = {"show": True, "y": None, "font": "Poppins ExtraBold", "color": "0E1014", "bg": True, "bgc": "FFFFFF"}
+_HOOK = {"show": True, "y": None, "font": "Poppins ExtraBold", "color": "0E1014", "bg": True, "bgc": "FFFFFF",
+         "duration": 2.5}
 
 
 def _look(cap=None, layout="blur", hook=None, cam=None):
@@ -106,6 +107,10 @@ def clean_look(raw) -> dict:
     hook["outline"] = _num(h.get("outline"), 0, 14, 0 if hook["bg"] else 6)     # a black edge round the letters
     hook["size"] = _num(h.get("size"), 60, 160, 96)                                # 96: the classic heading's size
     hook["upper"] = bool(h.get("upper"))
+    try:
+        hook["duration"] = max(1.0, min(8.0, round(float(h.get("duration", _HOOK["duration"])), 1)))
+    except (TypeError, ValueError):
+        hook["duration"] = _HOOK["duration"]
     from . import facecam
     # drawn by hand on the video (shares of its frame): where the cam is in the stream (None: found by AI), and the
     # part of the video to show (None: all of it)

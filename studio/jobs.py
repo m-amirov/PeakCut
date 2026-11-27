@@ -741,7 +741,7 @@ def caption_script(spoken: str, target: str, words: list, translated: bool) -> s
         return target
     if target == "ru" and words and translated:
         return "ru"
-    if spoken == "ru" and words and not target:
+    if spoken == "ru" and words and target in ("", "ru"):
         return "ru"
     return ""
 

@@ -20,7 +20,7 @@ STYLES = {
               "strong": "FFFFFF", "outline": 5, "pop": 106, "upper": False, "per": 4},
 }
 HOOK = {"font": "Poppins ExtraBold", "size": 96, "ink": "14100E", "box": "FFFFFF", "pad_x": 36, "pad_y": 22, "radius": 26,
-        "max_w": 900}
+        "max_w": 900, "min_size": 56, "safe_x": 48, "safe_y": 60, "duration": 2.5}
 # Urdu and Hindi in their own script: drawn with these whatever the style's font (its letters are Latin only), a
 # whole line at a time so the caption engine joins the letters and runs Urdu right to left
 SCRIPT_FONTS = {"ur": ("Noto Nastaliq Urdu", "NotoNastaliqUrdu-Bold.ttf", 1.3), "hi": ("Noto Sans Devanagari", "NotoSansDevanagari-Bold.ttf", 1.05),
@@ -44,7 +44,7 @@ class _Font:
             tables[tag] = off
         self.upm = struct.unpack(">H", d[tables[b"head"] + 18: tables[b"head"] + 20])[0]
         o = tables[b"OS/2"]
-        self.asc, self.desc = struct.unpack(">HH", d[o + 74: o + 78])      # what the renderer sizes the font by
+        self.asc, self.desc = struct.unpack(">HH", d[o + 74: o + 78])      # Windows ascent/descent are unsigned in OpenType
         self.cap = struct.unpack(">h", d[o + 88: o + 90])[0] or int(self.upm * 0.7)
         self.path = str(path)
         self._pil = {}
@@ -67,6 +67,19 @@ class _Font:
             return self._pil["f"].getlength(text) * self.em(size) / 200
         except Exception:  # noqa: BLE001 - no measuring library: a fair estimate keeps clips rendering
             return len(text) * self.em(size) * 0.62
+
+    def bounds(self, text, size):
+        """Visible glyph bounds at this ASS size, including bearings that advance width misses."""
+        try:
+            from PIL import ImageFont
+            if "f" not in self._pil:
+                self._pil["f"] = ImageFont.truetype(self.path, 200)
+            x0, y0, x1, y1 = self._pil["f"].getbbox(text)
+            scale = self.em(size) / 200
+            return x0 * scale, y0 * scale, x1 * scale, y1 * scale
+        except Exception:
+            w = self.width(text, size)
+            return 0, -self.em(size) * .75, w, self.em(size) * .25
 
     def cap_shift(self, size):
         """How far below the anchor the middle of a capital letter sits when text is centred on a point."""
@@ -244,9 +257,11 @@ def _hook_events(hook, dur, y, info=None, look=None):
     gap = lambda sz: sz * 0.16                                                       # noqa: E731
     e_w = lambda sz: f.em(sz) * 1.02                                                 # noqa: E731
     extra = lambda sz: len(emoji) * (e_w(sz) + gap(sz))                              # noqa: E731
+    edge = look.get("outline", 0 if boxed else 6) if look else 0
+    max_text_w = min(HOOK["max_w"], W - 2 * HOOK["safe_x"] - 2 * HOOK["pad_x"])
 
     def widths(lines, sz):
-        ws = [f.width(l, sz) for l in lines]
+        ws = [max(f.width(l, sz), f.bounds(l, sz)[2] - f.bounds(l, sz)[0]) + 2 * edge for l in lines]
         ws[-1] += extra(sz)
         return ws
     lines = [" ".join(words)]
@@ -254,14 +269,23 @@ def _hook_events(hook, dur, y, info=None, look=None):
         if n > max(1, len(words)):
             break
         lines = _split_lines(words, n, lambda ls: max(widths(ls, size))) if words else [""]
-        if max(widths(lines, size)) <= HOOK["max_w"]:
+        if max(widths(lines, size)) <= max_text_w:
             break
     widest = max(widths(lines, size))
-    if widest > HOOK["max_w"]:
-        size = max(40, int(size * HOOK["max_w"] / widest))
+    while widest > max_text_w and size > HOOK["min_size"]:
+        size -= 1
         widest = max(widths(lines, size))
-    line_h = f.em(size) * 1.16
+    shortened = text
+    while widest > max_text_w and len(shortened) > 1:
+        shortened = shortened[:-1].rstrip()
+        text = shortened + "…"
+        words = text.split()
+        lines = _split_lines(words, min(2, max(1, len(words))), lambda ls: max(widths(ls, size))) if words else [""]
+        widest = max(widths(lines, size))
+    widest = min(widest, max_text_w)
+    line_h = f.em(size) * 1.16 + 2 * edge
     bw, bh = widest + 2 * HOOK["pad_x"], line_h * len(lines) + 2 * HOOK["pad_y"]
+    y = max(HOOK["safe_y"] + bh / 2, min(H - HOOK["safe_y"] - bh / 2, y))
     x0, y0, r = (W - bw) / 2, y - bh / 2, min(HOOK["radius"], bh / 2)
     x1, y1 = x0 + bw, y0 + bh
     n = lambda v: f"{v:.0f}"                                                         # noqa: E731
@@ -269,9 +293,9 @@ def _hook_events(hook, dur, y, info=None, look=None):
            f"l {n(x1)} {n(y1 - r)} b {n(x1)} {n(y1)} {n(x1)} {n(y1)} {n(x1 - r)} {n(y1)} "
            f"l {n(x0 + r)} {n(y1)} b {n(x0)} {n(y1)} {n(x0)} {n(y1)} {n(x0)} {n(y1 - r)} "
            f"l {n(x0)} {n(y0 + r)} b {n(x0)} {n(y0)} {n(x0)} {n(y0)} {n(x0 + r)} {n(y0)}")
-    span = f"{_ts(0)},{_ts(dur)}"
+    shown = min(dur, float((look or {}).get("duration", HOOK["duration"])))
+    span = f"{_ts(0)},{_ts(shown)}"
     ev = [f"Dialogue: 3,{span},Hook,,0,0,0,,{{\\an7\\pos(0,0)\\fad(160,0)\\c&H{boxc}&\\p1}}{box}{{\\p0}}"] if boxed else []
-    edge = look.get("outline", 0 if boxed else 6) if look else 0          # a black edge round the letters
     txt = (f"\\fn{font}\\c&H{ink}&" + (f"\\bord{edge}\\3c&H000000&" if edge else "")) if look else ""
     for i, line in enumerate(lines):
         mid = y - line_h * (len(lines) - 1) / 2 + i * line_h

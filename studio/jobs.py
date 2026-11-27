@@ -1107,6 +1107,8 @@ def _piece_again(job, clip):
                                        int(job["options"]["quality"]), exact=True)
         meta = media.probe(piece)
     except Exception as e:  # noqa: BLE001
+        if _whole_source(job):
+            return
         raise RuntimeError(f"Could not fetch this part of the video: {safe.friendly(e, 250)}") from e
     clip.update(src=str(piece), src_offset=round(want, 2), src_end=round(want + meta["duration"], 2))
     clip["end"] = min(clip["end"], clip["src_end"])
@@ -1115,6 +1117,35 @@ def _piece_again(job, clip):
 
 
 PIECE_TRIES = (0, 20, 60)   # seconds waited before each try at a clip's stretch
+_source_locks = {}
+_source_locks_guard = threading.Lock()
+
+
+def _whole_source(job, video=None, notes=None):
+    """Get one checked local source for this job, including after its stretches were refused."""
+    d = Path(job["dir"])
+    with _source_locks_guard:
+        lock = _source_locks.setdefault(job["id"], threading.Lock())
+    with lock:
+        saved = job.get("source_path")
+        if saved and Path(saved).is_file():
+            return Path(saved)
+        path = None
+        try:
+            path = video.result() if video else media.download(job["source"]["url"], d, int(job["options"]["quality"]))
+        except Exception as e:  # noqa: BLE001 - a second, full download can be refused too
+            if video:
+                try:
+                    path = media.download(job["source"]["url"], d, int(job["options"]["quality"]))
+                except Exception as e2:  # noqa: BLE001
+                    e = e2
+            if not path and notes is not None:
+                notes.append(f"Whole-video download failed ({str(e)[-80:]})")
+        if not path:
+            return None
+        info = media.probe(path)
+        job.update(source_path=str(path), width=info["width"], height=info["height"])
+        return path
 
 
 def _fetch_piece(job, clip, full_audio):
@@ -1291,26 +1322,9 @@ def _run_job(job):
     span = (hi - lo) / 16000
     db = media.loudness_per_second(audio[lo:hi])
 
-    vlock, vstate = threading.Lock(), {}
-
     def whole_video():
         """Wait for the background download once; retry it, or give up and use pieces."""
-        with vlock:
-            if "path" not in vstate:
-                path = None
-                try:
-                    path = video.result()
-                except Exception as e:  # noqa: BLE001 - sites sometimes refuse a download
-                    notes.append(f"Video download refused once ({str(e)[-80:]}), retrying")
-                    try:
-                        path = media.download(src["url"], d, int(o["quality"]))
-                    except Exception as e2:  # noqa: BLE001
-                        notes.append(f"Whole-video download failed ({str(e2)[-80:]}), fetching clip parts instead")
-                if path:
-                    info = media.probe(path)
-                    job.update(source_path=str(path), width=info["width"], height=info["height"])
-                vstate["path"] = path
-            return vstate["path"]
+        return _whole_source(job, video, notes)
 
     exact = {}      # clip id -> (from, to, words): our own model's words for just that clip
 
@@ -1320,6 +1334,8 @@ def _run_job(job):
         began[clip["id"]] = time.time()
         if src["type"] == "url" and (pieces or not whole_video()):
             _fetch_piece(job, clip, audio)
+            if clip.get("status") == "error" and whole_video():
+                clip.update(status="rendering", error=None)
         if clip["status"] != "error" and clip.get("captions", True) and yt_model:
             # The clip was found with YouTube's transcript. What is shown on screen comes from our own model,
             # run on just this clip: full punctuation, nothing blanked out, timings to the word.
@@ -1550,8 +1566,11 @@ def _worker(quick_only=False):
                     clip.pop("src", None)
                     _fetch_piece(job, clip, np.zeros(0, dtype=np.int16))
                     if clip.get("status") == "error":
-                        save(job)
-                        continue
+                        if _whole_source(job):
+                            clip.update(status="rendering", error=None)
+                        else:
+                            save(job)
+                            continue
                 render_one(job, clip, words)
         except Cancelled:
             for c in job["clips"]:

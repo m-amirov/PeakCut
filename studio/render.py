@@ -81,6 +81,31 @@ class _Font:
             w = self.width(text, size)
             return 0, -self.em(size) * .75, w, self.em(size) * .25
 
+    def hook_width(self, text, size):
+        """Advance width at libass' heading font size.
+
+        ASS' ``\\fs`` is the font's em size.  Caption placement predates headings and uses ``em()``;
+        using that conversion for a hook made its Pillow measurement about a third too small.
+        """
+        try:
+            from PIL import ImageFont
+            if "f" not in self._pil:
+                self._pil["f"] = ImageFont.truetype(self.path, 200)
+            return self._pil["f"].getlength(text) * size / 200
+        except Exception:  # noqa: BLE001 - a fair estimate keeps clips rendering
+            return len(text) * size * .62
+
+    def hook_bounds(self, text, size):
+        """Visible hook glyph bounds at the same em scale libass receives."""
+        try:
+            from PIL import ImageFont
+            if "f" not in self._pil:
+                self._pil["f"] = ImageFont.truetype(self.path, 200)
+            return tuple(v * size / 200 for v in self._pil["f"].getbbox(text))
+        except Exception:  # noqa: BLE001
+            w = self.hook_width(text, size)
+            return 0, -size * .75, w, size * .25
+
     def cap_shift(self, size):
         """How far below the anchor the middle of a capital letter sits when text is centred on a point."""
         return ((self.asc - self.desc) / 2 - self.cap / 2) * size / (self.asc + self.desc)
@@ -242,9 +267,9 @@ def _hook_events(hook, dur, y, info=None, look=None):
     after the last word. `info` (when given) receives where each emoji goes and where the box ends.
     `look`: a style's heading (font, text colour, box on or off and its colour); without it, the classic white box."""
     if look:
-        font, ink, boxc, boxed = look["font"], _bgr(look["color"]), _bgr(look["bgc"]), look["bg"]
+        font, ink, boxc, boxed = hook_font(hook, look["font"]), _bgr(look["color"]), _bgr(look["bgc"]), look["bg"]
     else:
-        font, ink, boxc, boxed = HOOK["font"], HOOK["ink"], HOOK["box"], True
+        font, ink, boxc, boxed = hook_font(hook, HOOK["font"]), HOOK["ink"], HOOK["box"], True
     f, size = _Font.get(font), int(round((look.get("size", HOOK["size"]) if look else HOOK["size"]) * hook_scale(font)))
     text, emoji = split_hook(hook)
     if look and look.get("upper"):
@@ -255,13 +280,13 @@ def _hook_events(hook, dur, y, info=None, look=None):
     if not words and not emoji:
         return []
     gap = lambda sz: sz * 0.16                                                       # noqa: E731
-    e_w = lambda sz: f.em(sz) * 1.02                                                 # noqa: E731
+    e_w = lambda sz: sz * 1.02                                                       # noqa: E731
     extra = lambda sz: len(emoji) * (e_w(sz) + gap(sz))                              # noqa: E731
     edge = look.get("outline", 0 if boxed else 6) if look else 0
     max_text_w = min(HOOK["max_w"], W - 2 * HOOK["safe_x"] - 2 * HOOK["pad_x"])
 
     def widths(lines, sz):
-        ws = [max(f.width(l, sz), f.bounds(l, sz)[2] - f.bounds(l, sz)[0]) + 2 * edge for l in lines]
+        ws = [max(f.hook_width(l, sz), f.hook_bounds(l, sz)[2] - f.hook_bounds(l, sz)[0]) + 2 * edge for l in lines]
         ws[-1] += extra(sz)
         return ws
     lines = [" ".join(words)]
@@ -283,7 +308,7 @@ def _hook_events(hook, dur, y, info=None, look=None):
         lines = _split_lines(words, min(2, max(1, len(words))), lambda ls: max(widths(ls, size))) if words else [""]
         widest = max(widths(lines, size))
     widest = min(widest, max_text_w)
-    line_h = f.em(size) * 1.16 + 2 * edge
+    line_h = size * 1.16 + 2 * edge
     bw, bh = widest + 2 * HOOK["pad_x"], line_h * len(lines) + 2 * HOOK["pad_y"]
     y = max(HOOK["safe_y"] + bh / 2, min(H - HOOK["safe_y"] - bh / 2, y))
     x0, y0, r = (W - bw) / 2, y - bh / 2, min(HOOK["radius"], bh / 2)
@@ -296,12 +321,18 @@ def _hook_events(hook, dur, y, info=None, look=None):
     shown = min(dur, float((look or {}).get("duration", HOOK["duration"])))
     span = f"{_ts(0)},{_ts(shown)}"
     ev = [f"Dialogue: 3,{span},Hook,,0,0,0,,{{\\an7\\pos(0,0)\\fad(160,0)\\c&H{boxc}&\\p1}}{box}{{\\p0}}"] if boxed else []
-    txt = (f"\\fn{font}\\c&H{ink}&" + (f"\\bord{edge}\\3c&H000000&" if edge else "")) if look else ""
+    # Noto Sans is bundled only as its Bold face.  Ask libass for that face explicitly so it uses the
+    # same glyph metrics as _Font rather than a system regular/fallback face.
+    # Keep the classic legacy heading byte-for-byte compatible.  An explicit override is needed only for a template
+    # look, or when the hook's own script selected a bundled fallback face.
+    requested_font = look["font"] if look else HOOK["font"]
+    weight = "\\b1" if font == "Noto Sans" else ""
+    txt = (f"\\fn{font}{weight}\\c&H{ink}&" + (f"\\bord{edge}\\3c&H000000&" if edge else "")) if look or font != requested_font else ""
     for i, line in enumerate(lines):
         mid = y - line_h * (len(lines) - 1) / 2 + i * line_h
         cx = W / 2
         if emoji and i == len(lines) - 1:           # the last line is its words and the emoji together, centred as one
-            tw = f.width(line, size)
+            tw = f.hook_width(line, size)
             cx = W / 2 - extra(size) / 2
             x = W / 2 - (tw + extra(size)) / 2 + tw + gap(size)
             for ch in emoji:
@@ -311,6 +342,7 @@ def _hook_events(hook, dur, y, info=None, look=None):
             ev.append(f"Dialogue: 4,{span},Hook,,0,0,0,,{{\\an5\\pos({cx:.0f},{mid - f.cap_shift(size):.0f})\\fad(160,0)\\fs{size}{txt}}}{line}")
     if info is not None:
         info["bottom"] = y1
+        info["hook_duration"] = shown
     return ev
 
 
@@ -348,6 +380,18 @@ def _in_script(text, script) -> bool:
     return bool(rx and letters and sum(1 for c in letters if rx.match(c)) >= len(letters) / 2)
 
 
+def hook_font(text, requested):
+    """Choose a bundled heading face from the heading's own glyphs, not caption state.
+
+    The display fonts are Latin-only.  A single non-Latin script letter is enough to require
+    the bundled face because mixed hooks must not silently fall back to a system font.
+    """
+    for script, (name, _file, _grow) in SCRIPT_FONTS.items():
+        if _SCRIPT_RANGES[script].search(str(text or "")):
+            return name
+    return requested
+
+
 def build_ass(words, start, end, hook, style_name, highlight, hook_y, cap_y, note="", info=None, show_hook=True, hook_look=None,
               script="") -> str:
     """style_name: a template's caption settings (dict), or one of the old style names. script: "ur" or "hi" when the
@@ -356,9 +400,6 @@ def build_ass(words, start, end, hook, style_name, highlight, hook_y, cap_y, not
     if script in SCRIPT_FONTS:
         name, _f, grow = SCRIPT_FONTS[script]
         st.update(font=name, size=int(st["size"] * grow), upper=False)
-        # the heading keeps its own font and design: the script's font only when the heading itself is written in it
-        if _in_script(hook, script):
-            hook_look = dict(hook_look or templates.clean_look({})["hook"], font=name, upper=False)
     words = [dict(w, s=w["s"] - CAPTION_LEAD, e=w["e"] - CAPTION_LEAD) for w in words]
     strong = {_key(h) for h in highlight if _key(h)}
     head = f"""[Script Info]
@@ -735,8 +776,9 @@ def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layo
         png = work / f"{name}.e{i}.png"
         if emoji_png(e["ch"], png, e["size"]):
             more += ["-loop", "1", "-i", png.name]
+            shown = float(info.get("hook_duration", HOOK["duration"]))
             fc += (f";[{n}:v]format=rgba,fade=t=in:st=0:d=0.16:alpha=1[e{i}];"
-                   f"[{last}][e{i}]overlay={e['x']}:{e['y']}:shortest=1[ve{i}]")
+                   f"[{last}][e{i}]overlay={e['x']}:{e['y']}:enable='between(t,0,{shown:.2f})':shortest=1[ve{i}]")
             last, n = f"ve{i}", n + 1
     base = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src), *more,
             "-filter_complex", fc, "-map", f"[{last}]", "-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",

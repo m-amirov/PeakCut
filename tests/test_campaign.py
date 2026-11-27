@@ -34,7 +34,11 @@ ev = render._hook_events("bro gave up on his own race 😭", 10, 466, info)
 check("the title text has no emoji character left in it (it is drawn as a picture)", any("😭" in e for e in ev), False)
 if render.emoji_font():
     e = (info["emoji"] or [{}])[0]
-    check("the emoji is placed to the right of the words, on the title's line", (e.get("ch"), 540 < e.get("x", 0) < 1000, abs(e.get("y", 0) + e.get("size", 0) / 2 - 466) < 6), ("😭", True, True))
+    last = ev[-1]
+    pos, size = re.search(r"\\pos\(\d+,(\d+)\).*?\\fs(\d+)", last).groups()
+    mid = int(pos) + render._Font.get(render.HOOK["font"]).cap_shift(int(size))
+    check("the emoji is placed to the right of the words, on the title's line", (e.get("ch"), 540 < e.get("x", 0) < 1000,
+          abs(e.get("y", 0) + e.get("size", 0) / 2 - mid) < 6), ("😭", True, True))
 long = {"emoji": []}
 ev = render._hook_events("he really thought nobody would notice that at all and kept going anyway 💀", 10, 466, long)
 check("a long sentence takes a second line, never a third: the text is made smaller instead", len(ev) - 1, 2)

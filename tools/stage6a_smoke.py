@@ -117,10 +117,10 @@ def main():
         media_probe = probe(result)
         run(["ffmpeg", "-v", "error", "-i", str(result), "-f", "null", "-"])
         write_json(case / "metrics.json", metrics)
-        write_json(case / "smoke-report.json", {"artifact": str(result), "ffprobe": media_probe, "loudness": loudness(result),
-                                                   "beat_alignment": {"status": "plan references music markers", "markers": [s.get("music_beat_reference") for s in plan["segments"]]},
+        write_json(case / "smoke-report.json", {"artifact": str(result), "ffprobe": media_probe, "full_decode": "PASS", "loudness": loudness(result),
+                                                   "beat_alignment": {"status": "renderer consumes plan sync points; hard-cut frame evidence is in tests/test_cinematic.py", "markers": [s.get("music_beat_reference") for s in plan["segments"]], "sync_definition": plan.get("crossfade_sync_definition")},
                                                    "render_time_seconds": metrics["render_seconds"], "cpu_ram_vram": metrics["cpu_ram_vram"],
-                                                   "ai_usage": "NOT RUN: bounded local smoke; no OpenRouter call authorized", "selection_reason": case_reason,
+                                                   "ai_usage": "NOT RUN: deterministic local smoke; paid OpenRouter smoke is recorded separately", "selection_reason": case_reason,
                                                    "acceptance": {"technical": "PASS", "artistic": "NOT RUN", "listening": "NOT RUN", "rights": "TECHNICAL-ONLY synthetic fixture", "publication": "BLOCKED"}})
     write_json(output / "README.json", {"scope": "Stage 6A technical smoke only", "source": str(source), "track": str(music),
                                          "artistic_listening_rights_publication": "NOT ACCEPTED", "generated_cases": [x[0] for x in cases]})

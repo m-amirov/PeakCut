@@ -26,7 +26,7 @@ from . import config, ctx, media
 
 
 ANALYZER_VERSION = "cinematic-audio-1"
-PLANNER_VERSION = "cinematic-planner-1"
+PLANNER_VERSION = "cinematic-planner-2"
 MUSIC_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 VIDEO_EXTS = {".mp4", ".mkv", ".mov"}
 ATMOSPHERE_TAGS = {
@@ -371,6 +371,23 @@ def _temp_music_path(upload_id: str) -> Path:
     return matches[0]
 
 
+def _saliency_center(path: Path) -> tuple[float, float, str]:
+    """Small local saliency heuristic used for crop bias; never presented as face tracking."""
+    try:
+        from PIL import Image
+        image = np.asarray(Image.open(path).convert("L").resize((96, 54)), dtype=np.float32) / 255.0
+        gx = np.abs(np.diff(image, axis=1, prepend=image[:, :1]))
+        gy = np.abs(np.diff(image, axis=0, prepend=image[:1, :]))
+        weights = 0.35 * image + 0.65 * np.sqrt(gx * gx + gy * gy) + 0.02
+        yy, xx = np.mgrid[0:weights.shape[0], 0:weights.shape[1]]
+        total = float(weights.sum()) or 1.0
+        cx = float((weights * xx).sum() / total / max(1, weights.shape[1] - 1))
+        cy = float((weights * yy).sum() / total / max(1, weights.shape[0] - 1))
+        return round(max(0.2, min(0.8, cx)), 4), round(max(0.2, min(0.8, cy)), 4), "saliency_heuristic"
+    except Exception:  # noqa: BLE001 - centered crop is the explicit safe fallback
+        return 0.5, 0.5, "center_fallback"
+
+
 def _frame_features(path: Path, out_dir: Path, cancel=None) -> list[dict]:
     info = validate_video(path)
     duration = info["duration"]
@@ -427,11 +444,13 @@ def _frame_features(path: Path, out_dir: Path, cancel=None) -> list[dict]:
                            "-vf", "scale=320:-2", "-q:v", "5", str(frame_dir / frame_name)], timeout=30)
             except Exception:
                 frame_name = ""
+        reframe_x, reframe_y, reframe_mode = _saliency_center(frame_dir / frame_name) if frame_name else (0.5, 0.5, "center_fallback")
         scenes.append({"id": f"scene-{n:04d}", "start": round(a, 3), "end": round(b, 3), "duration": round(b - a, 3),
                        "representative_frame": str((Path("frames") / frame_name).as_posix()) if frame_name else "",
                        "motion_intensity": round(float(np.mean([x["motion"] for x in rows])), 6),
                        "sharpness": round(float(np.mean([x["sharpness"] for x in rows])), 4),
                        "brightness": round(float(np.mean([x["brightness"] for x in rows])), 6),
+                       "reframe_center_x": reframe_x, "reframe_center_y": reframe_y, "reframe_mode": reframe_mode,
                        "black_frame": black >= 0.94, "excluded": excluded,
                        "exclusion_reason": "black-frame" if black >= 0.94 else "too-short" if b - a < 0.65 else ""})
     return scenes
@@ -628,18 +647,107 @@ def _scene_score(scene: dict, atmosphere: str, max_motion: float, max_sharp: flo
     return round(sharp * 0.42 + motion * 0.34 + max(0.0, light) * 0.24, 6)
 
 
-def _nearest_music_marker(analysis: dict | None, at: float) -> float | None:
+def _nearest_music_marker(analysis: dict | None, at: float, music_offset: float = 0.0,
+                          beat_sync: bool = True) -> float | None:
+    """Return the source-time marker nearest to a timeline position.
+
+    The old planner used this value as decoration.  The new planner uses the
+    same conversion when it creates the actual timeline boundary, so keeping
+    the raw music timestamp in the plan makes the offset auditable.
+    """
+    if not beat_sync:
+        return None
     if not analysis:
         return None
-    points = analysis.get("strong_accents") or analysis.get("beat_timestamps") or analysis.get("phrase_timestamps") or []
+    confidence = float(analysis.get("rhythm_confidence") or 0.0)
+    points = (analysis.get("beat_timestamps") if confidence >= 0.35 else None) or analysis.get("strong_accents") or analysis.get("phrase_timestamps") or []
     if not points:
         return None
-    return min((float(x) for x in points), key=lambda x: abs(x - at))
+    return min((float(x) for x in points), key=lambda x: abs(x - (at + music_offset)))
+
+
+def _music_sync_profile(analysis: dict | None, offset: float, duration: float, intensity: str) -> dict:
+    """Build bounded timeline markers without treating every onset as a cut."""
+    if not analysis:
+        return {"mode": "none", "confidence": 0.0, "markers": []}
+    confidence = max(0.0, min(1.0, float(analysis.get("rhythm_confidence") or 0.0)))
+    beats = [float(x) for x in (analysis.get("beat_timestamps") or [])]
+    accents = [float(x) for x in (analysis.get("strong_accents") or [])]
+    phrases = [float(x) for x in (analysis.get("phrase_timestamps") or [])]
+    if confidence >= 0.35 and beats:
+        base, mode = beats, "beats"
+    elif accents:
+        base, mode = accents, "accents-fallback"
+    elif phrases:
+        base, mode = phrases, "phrases-fallback"
+    else:
+        return {"mode": "natural-fallback", "confidence": confidence, "markers": []}
+    # Strong accents select the expressive boundaries for strong edits.  For
+    # other intensities they remain a secondary cue instead of forcing a cut
+    # on every onset.
+    preferred = accents if intensity == "strong" and accents else base
+    markers = []
+    for raw in sorted(set(round(x, 6) for x in preferred)):
+        timeline = raw - float(offset)
+        if 0.25 <= timeline <= duration - 0.25:
+            markers.append({"timeline": round(timeline, 6), "music": round(raw, 6), "kind": "accent" if raw in accents else mode})
+    return {"mode": mode, "confidence": round(confidence, 3), "markers": markers}
+
+
+def _choose_boundaries(duration: float, count: int, profile: dict) -> tuple[list[float], list[dict | None]]:
+    boundaries, references = [0.0], [None]
+    used = set()
+    markers = list(profile.get("markers") or [])
+    for index in range(1, count):
+        desired = duration * index / count
+        remaining = count - index
+        available = [m for m in markers if m["music"] not in used and
+                     m["timeline"] > boundaries[-1] + 0.8 and
+                     m["timeline"] < duration - remaining * 0.8]
+        marker = min(available, key=lambda m: abs(m["timeline"] - desired), default=None)
+        if marker is not None and abs(float(marker["timeline"]) - desired) <= 1.35:
+            point = float(marker["timeline"])
+            used.add(marker["music"])
+        else:
+            point, marker = desired, None
+        boundaries.append(round(point, 6))
+        references.append(marker)
+    boundaries.append(round(duration, 6))
+    references.append(None)
+    return boundaries, references
+
+
+def _validated_ai_recommendations(notes: dict | None, scenes: list[dict]) -> dict[str, dict]:
+    if not isinstance(notes, dict) or notes.get("status") != "available":
+        return {}
+    known = {str(s.get("id")) for s in scenes}
+    bounded = notes.get("candidate_ids")
+    if isinstance(bounded, list):
+        known &= {str(x) for x in bounded}
+    out, seen = {}, set()
+    recommendations = notes.get("recommendations")
+    if not isinstance(recommendations, list):
+        return {}
+    for rank, item in enumerate(recommendations):
+        if not isinstance(item, dict) or str(item.get("source_id")) not in known or str(item.get("source_id")) in seen:
+            continue
+        try:
+            score = float(item.get("score"))
+        except (TypeError, ValueError):
+            continue
+        if not 0.0 <= score <= 100.0:
+            continue
+        sid = str(item["source_id"])
+        seen.add(sid)
+        out[sid] = {"score": score, "rank": rank, "reason": str(item.get("reason") or "AI recommendation")[:240]}
+    return out
 
 
 def make_plan(source: Path, source_info: dict, scenes: list[dict], options: dict, music: dict | None, music_analysis: dict | None,
-              reason: str, warnings: list[str]) -> dict:
+              reason: str, warnings: list[str], ai_notes: dict | None = None) -> dict:
     duration = min(float(options["duration"]), float(source_info["duration"]))
+    if float(source_info["duration"]) + 0.05 < float(options["duration"]):
+        warnings.append("The source is shorter than the requested edit; the output duration was capped to the source.")
     usable = [dict(s) for s in scenes if not s.get("excluded") and float(s.get("duration") or 0) >= 0.65]
     if not usable:
         raise RuntimeError("No usable scenes were found in this video.")
@@ -647,54 +755,129 @@ def make_plan(source: Path, source_info: dict, scenes: list[dict], options: dict
     max_sharp = max(float(s.get("sharpness") or 0) for s in usable) or 1.0
     for scene in usable:
         scene["selection_score"] = _scene_score(scene, options["atmosphere"], max_motion, max_sharp)
-    usable.sort(key=lambda s: s["selection_score"], reverse=True)
+    ai_map = _validated_ai_recommendations(ai_notes, usable)
+    if ai_notes and ai_notes.get("status") == "available" and not ai_map:
+        warnings.append("AI scene recommendations were invalid or referred to unknown scenes; local selection was used.")
+    for scene in usable:
+        rec = ai_map.get(str(scene.get("id")))
+        scene["ai_score"] = round(float(rec["score"]), 3) if rec else None
+        scene["ai_rank"] = rec["rank"] if rec else None
+        scene["combined_selection_score"] = round(scene["selection_score"] * 0.4 + (float(rec["score"]) / 100.0) * 0.6, 6) if rec else scene["selection_score"] * 0.4
+    usable.sort(key=lambda s: (float(s["combined_selection_score"]), float(s["selection_score"])), reverse=True)
     target_len = INTENSITY[options["effects_intensity"]]
     selected = []
+    required_count = max(1, int(math.ceil(duration / target_len)))
+    transition = 0.3 if options["smooth_transitions"] and len(usable) > 1 else 0.0
     for scene in usable:
         if any(not (scene["end"] <= x["start"] or scene["start"] >= x["end"]) for x in selected):
             continue
         selected.append(scene)
-        estimated = sum(min(float(x["duration"]), target_len) for x in selected)
-        if estimated >= duration:
+        estimated = sum(min(float(x["duration"]), target_len + transition) for x in selected) - transition * max(0, len(selected) - 1)
+        if len(selected) >= required_count and estimated >= duration:
             break
     if not selected:
         selected = [usable[0]]
-    selected.sort(key=lambda s: s["start"])
-    segments, cursor = [], 0.0
-    transition = 0.3 if options["smooth_transitions"] and len(selected) > 1 else 0.0
+    if transition and sum(float(x["duration"]) for x in selected) - transition * (len(selected) - 1) < duration - 0.05:
+        transition = 0.0
+        warnings.append("Smooth transitions were disabled because their overlap would exceed the available source material.")
+    if ai_map and sum(1 for s in selected if s.get("ai_rank") is not None) >= 2:
+        selected.sort(key=lambda s: (s.get("ai_rank") if s.get("ai_rank") is not None else 9999, s["start"]))
+    else:
+        selected.sort(key=lambda s: s["start"])
+    sync_profile = _music_sync_profile(music_analysis, float(options["music_start_offset"]), duration, options["effects_intensity"])
+    sync_enabled = bool(options["beat_sync"] and music_analysis and sync_profile.get("markers"))
+    if options["beat_sync"] and not sync_enabled:
+        sync_profile["mode"] = "natural-fallback"
+        warnings.append("Music rhythm confidence was too low for beat cuts; natural scene pacing was used.")
+    boundaries, references = _choose_boundaries(duration, len(selected), sync_profile if sync_enabled else {"markers": []})
+    segments = []
+    previous_source_out = 0.0
+    previous_scene_start = -1.0
     for index, scene in enumerate(selected):
         speed = 1.0
         if options["speed_ramp"] and options["effects_intensity"] == "strong":
             speed = 1.08 if index % 2 else 0.94
-        wanted_output = min(float(scene["duration"]) / speed, target_len, max(0.8, duration - cursor))
-        source_len = min(float(scene["duration"]), wanted_output * speed)
+        visible_start, visible_end = boundaries[index], boundaries[index + 1]
+        planned_output = (visible_end - visible_start) + (transition if index < len(selected) - 1 else 0.0)
+        # A beat can fall slightly inside a detected scene.  Keep the scene
+        # identity for selection, but let the source window end at the exact
+        # planned boundary; this is what makes a hard cut frame-accurate.
         source_in = float(scene["start"])
-        source_out = min(float(scene["end"]), source_in + source_len)
+        if index and float(scene["start"]) >= previous_scene_start:
+            source_in = max(source_in, previous_source_out)
+        source_out = min(float(source_info["duration"]), source_in + planned_output * speed)
         output_len = (source_out - source_in) / speed
-        timeline_in = 0.0 if not segments else max(0.0, cursor - transition)
+        if output_len + 0.08 < planned_output:
+            warnings.append(f"Source material ended before segment {index + 1}; the edit is shorter than requested.")
+        timeline_in = visible_start
         timeline_out = timeline_in + output_len
+        reference = references[index] if index > 0 and sync_enabled else None
+        crop_center_x = float(scene.get("reframe_center_x") or 0.5)
+        crop_center_y = float(scene.get("reframe_center_y") or 0.5)
         segments.append({"source_id": scene["id"], "source_in": round(source_in, 3), "source_out": round(source_out, 3),
-                         "timeline_in": round(timeline_in, 3), "timeline_out": round(timeline_out, 3), "playback_speed": speed,
-                         "crop": {"mode": "center", "smart_reframe": options["smart_reframe"], "zoom": 1.05 if options["dynamic_zoom"] else 1.0},
-                         "transition": {"type": "crossfade" if transition else "hard_cut", "duration": transition},
-                         "effects": {"color_grading": options["color_grading"], "intensity": options["effects_intensity"]},
-                         "music_beat_reference": _nearest_music_marker(music_analysis, timeline_in),
-                         "selection_reason": f"score={scene['selection_score']}; motion={scene['motion_intensity']}; sharpness={scene['sharpness']}"})
-        cursor = timeline_out
-        if cursor >= duration - 0.05:
-            break
-    if cursor < duration - 0.5:
+                        "timeline_in": round(timeline_in, 3), "timeline_out": round(timeline_out, 3), "playback_speed": speed,
+                        "crop": {"mode": "saliency_heuristic" if options["smart_reframe"] else "center",
+                                 "smart_reframe": options["smart_reframe"], "reframe_limit": "No face/character detector; local visual-saliency center only",
+                                 "center_x": round(crop_center_x, 4), "center_y": round(crop_center_y, 4),
+                                 "zoom": 1.05 if options["dynamic_zoom"] else 1.0},
+                        "transition": {"type": "crossfade" if transition and index else "hard_cut", "duration": transition if index else 0.0},
+                        "effects": {"color_grading": options["color_grading"], "intensity": options["effects_intensity"],
+                                    "dynamic_zoom": "time-varying-scale" if options["dynamic_zoom"] else "off",
+                                    "speed_ramp": "per-segment-speed-variation" if options["speed_ramp"] else "off"},
+                        "music_beat_reference": reference.get("music") if reference else None,
+                        "sync_point": round(visible_start, 3) if reference else None,
+                        "sync_point_type": "crossfade_start" if reference and transition else "hard_cut" if reference else "natural",
+                        "sync_error_frames": 0 if reference else None,
+                        "ai_score": scene.get("ai_score"),
+                        "selection_reason": f"local={scene['selection_score']}; ai={scene.get('ai_score')}; motion={scene['motion_intensity']}; sharpness={scene['sharpness']}"})
+        previous_source_out, previous_scene_start = source_out, float(scene["start"])
+    rendered_duration = sum(float(seg["timeline_out"]) - float(seg["timeline_in"]) for seg in segments) - transition * max(0, len(segments) - 1)
+    if rendered_duration < duration - 0.5:
         warnings.append("The source did not contain enough distinct usable scenes; the edit is shorter than requested.")
-    total = round(min(cursor, duration), 3)
+    total = round(min(rendered_duration, duration), 3)
     return {"planner_version": PLANNER_VERSION, "source_name": source.name, "source_duration": round(source_info["duration"], 3),
             "track_id": (music or {}).get("track_id", ""), "music_offset": round(float(options["music_start_offset"]), 3),
             "music_duration": round(float((music_analysis or {}).get("duration") or 0), 3), "atmosphere": options["atmosphere"],
             "intensity": options["effects_intensity"], "requested_duration": options["duration"], "total_duration": total,
             "transition_overlap": transition, "selection_reason": reason, "warnings": warnings, "segments": segments,
-            "beat_sync": options["beat_sync"], "ai_scene_selector": bool(options.get("ai_scene_selector"))}
+            "beat_sync": bool(options["beat_sync"]), "sync_mode": sync_profile.get("mode", "none") if options["beat_sync"] else "off",
+            "rhythm_confidence": sync_profile.get("confidence", 0.0),
+            "crossfade_sync_definition": "beat-aligned at crossfade start; visual blend spans the following overlap" if transition else "not applicable",
+            "ai_scene_selector": bool(options.get("ai_scene_selector")),
+            "ai_recommendations_applied": bool(ai_map)}
 
 
 def validate_plan(plan: dict, source_duration: float) -> list[str]:
+    if str(plan.get("planner_version", "")).endswith("-2"):
+        errors, rendered, previous_out = [], 0.0, 0.0
+        segments = plan.get("segments") if isinstance(plan, dict) else None
+        if not isinstance(segments, list) or not segments:
+            return ["The edit plan has no segments."]
+        for i, seg in enumerate(segments):
+            try:
+                a, b = float(seg["source_in"]), float(seg["source_out"])
+                ti, to = float(seg["timeline_in"]), float(seg["timeline_out"])
+                speed = float(seg.get("playback_speed") or 1.0)
+                trans = float((seg.get("transition") or {}).get("duration") or 0.0) if i else 0.0
+            except (KeyError, TypeError, ValueError):
+                errors.append(f"Segment {i + 1} has invalid time values.")
+                continue
+            if not (0 <= a < b <= source_duration + 0.05) or speed <= 0:
+                errors.append(f"Segment {i + 1} leaves the source boundaries.")
+            if to <= ti or ti < -0.01:
+                errors.append(f"Segment {i + 1} has an invalid timeline range.")
+            if i and ti > previous_out + 0.08:
+                errors.append(f"Segment {i + 1} leaves a timeline gap.")
+            if i and abs((previous_out - ti) - trans) > 0.08:
+                errors.append(f"Segment {i + 1} transition overlap does not match its timeline.")
+            span = to - ti
+            if abs((b - a) / speed - span) > 0.12:
+                errors.append(f"Segment {i + 1} source speed does not match its timeline span.")
+            rendered += span - trans
+            previous_out = to
+        if abs(float(plan.get("total_duration") or 0) - rendered) > 0.08:
+            errors.append("Plan duration does not match its rendered timeline after transition overlap.")
+        return errors
     errors, last_out = [], 0.0
     segments = plan.get("segments") if isinstance(plan, dict) else None
     if not isinstance(segments, list) or not segments:
@@ -743,20 +926,31 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
         cmd += ["-ss", f"{float(seg['source_in']):.3f}", "-t", f"{float(seg['source_out']) - float(seg['source_in']):.3f}", "-i", str(source)]
     music_index = len(segments)
     if music_path:
-        cmd += ["-stream_loop", "-1", "-ss", f"{float(plan.get('music_offset') or 0):.3f}", "-i", str(music_path)]
+        # A finite input plus explicit silence padding avoids silently looping
+        # a short track.  The plan owns the effective output duration.
+        cmd += ["-ss", f"{float(plan.get('music_offset') or 0):.3f}", "-i", str(music_path)]
     filters, video_labels, audio_labels = [], [], []
     grading = {"dramatic": (1.08, 0.94, -0.015), "dark_cinematic": (1.12, 0.82, -0.05), "emotional": (1.03, 0.92, 0.01),
                "epic": (1.10, 1.10, 0.0), "natural_film": (1.02, 1.0, 0.0), "phonk": (1.15, 1.16, -0.01)}[options["atmosphere"]]
     for i, seg in enumerate(segments):
         speed = float(seg.get("playback_speed") or 1.0)
         zoom = float((seg.get("crop") or {}).get("zoom") or 1.0)
+        clip_duration = max(0.25, float(seg["timeline_out"]) - float(seg["timeline_in"]))
         if zoom > 1:
-            scale = f"scale=1080*{zoom:.4f}:1920*{zoom:.4f}:force_original_aspect_ratio=increase:flags=lanczos"
+            if options["dynamic_zoom"]:
+                growth = f"(1+0.025*sin(2*PI*t/{clip_duration:.5f}))"
+                scale = f"scale=w='1080*{zoom:.4f}*{growth}':h='1920*{zoom:.4f}*{growth}':eval=frame:force_original_aspect_ratio=increase:flags=lanczos"
+            else:
+                scale = f"scale=1080*{zoom:.4f}:1920*{zoom:.4f}:force_original_aspect_ratio=increase:flags=lanczos"
         else:
             scale = "scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos"
-        crop = "crop=1080:1920:(in_w-out_w)/2+(in_w-out_w)*0.08*sin(t*0.7):(in_h-out_h)/2+(in_h-out_h)*0.06*cos(t*0.5)"
-        if not options["dynamic_zoom"]:
-            crop = "crop=1080:1920:(in_w-out_w)/2:(in_h-out_h)/2"
+        crop_meta = seg.get("crop") or {}
+        center_x = float(crop_meta.get("center_x") or 0.5)
+        center_y = float(crop_meta.get("center_y") or 0.5)
+        if options["dynamic_zoom"]:
+            crop = f"crop=1080:1920:(in_w-out_w)*{center_x:.4f}+(in_w-out_w)*0.04*sin(t*0.7):(in_h-out_h)*{center_y:.4f}+(in_h-out_h)*0.03*cos(t*0.5)"
+        else:
+            crop = f"crop=1080:1920:(in_w-out_w)*{center_x:.4f}:(in_h-out_h)*{center_y:.4f}"
         eq = f"eq=contrast={grading[0]:.3f}:saturation={grading[1]:.3f}:brightness={grading[2]:.3f}" if options["color_grading"] else "null"
         filters.append(f"[{i}:v]setpts=PTS/{speed:.5f},fps=30,{scale},{crop},{eq},setsar=1[v{i}]")
         video_labels.append((f"v{i}", float(seg["timeline_out"]) - float(seg["timeline_in"])))
@@ -767,7 +961,7 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
     accumulated = video_labels[0][1]
     for i in range(1, len(video_labels)):
         label, length = video_labels[i]
-        trans = min(0.3 if options["smooth_transitions"] else 0.0, accumulated / 3, length / 3)
+        trans = float((segments[i].get("transition") or {}).get("duration") or 0.0) if str(plan.get("planner_version", "")).endswith("-2") else min(0.3 if options["smooth_transitions"] else 0.0, accumulated / 3, length / 3)
         if trans:
             out = f"vx{i}"
             filters.append(f"[{current}][{label}]xfade=transition=fade:duration={trans:.3f}:offset={accumulated - trans:.3f}[{out}]")
@@ -780,17 +974,19 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
     audio = None
     if audio_labels:
         audio = audio_labels[0][0]
+        audio_accumulated = audio_labels[0][1]
         for i in range(1, len(audio_labels)):
             label, length = audio_labels[i]
-            trans = min(0.3 if options["smooth_transitions"] else 0.0, accumulated / 3, length / 3)
+            trans = float((segments[i].get("transition") or {}).get("duration") or 0.0) if str(plan.get("planner_version", "")).endswith("-2") else min(0.3 if options["smooth_transitions"] else 0.0, audio_accumulated / 3, length / 3)
             out = f"ax{i}"
             if trans:
                 filters.append(f"[{audio}][{label}]acrossfade=d={trans:.3f}:c1=tri:c2=tri[{out}]")
             else:
                 filters.append(f"[{audio}][{label}]concat=n=2:v=0:a=1[{out}]")
             audio = out
+            audio_accumulated = audio_accumulated + length - trans
         if music_path:
-            filters.append(f"[{music_index}:a]atrim=duration={accumulated:.3f},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.35,afade=t=out:st={max(0.0, accumulated - 0.5):.3f}:d=0.5[music]")
+            filters.append(f"[{music_index}:a]asetpts=PTS-STARTPTS,apad=pad_dur={accumulated:.3f},atrim=duration={accumulated:.3f},afade=t=in:st=0:d=0.35,afade=t=out:st={max(0.0, accumulated - 0.5):.3f}:d=0.5[music]")
             if options["audio_ducking"]:
                 filters.append(f"[music][{audio}]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=250[duck]")
                 filters.append(f"[duck][{audio}]amix=inputs=2:duration=longest:dropout_transition=0,loudnorm=I=-14:TP=-1.0:print_format=none[aout]")
@@ -801,7 +997,7 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
             filters.append(f"[{audio}]loudnorm=I=-14:TP=-1.0:print_format=none[aout]")
             audio = "aout"
     elif music_path:
-        filters.append(f"[{music_index}:a]atrim=duration={accumulated:.3f},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.35,afade=t=out:st={max(0.0, accumulated - 0.5):.3f}:d=0.5,loudnorm=I=-14:TP=-1.0:print_format=none[aout]")
+        filters.append(f"[{music_index}:a]asetpts=PTS-STARTPTS,apad=pad_dur={accumulated:.3f},atrim=duration={accumulated:.3f},afade=t=in:st=0:d=0.35,afade=t=out:st={max(0.0, accumulated - 0.5):.3f}:d=0.5,loudnorm=I=-14:TP=-1.0:print_format=none[aout]")
         audio = "aout"
     cmd += ["-filter_complex", ";".join(filters), "-map", "[vout]"]
     if audio:
@@ -809,13 +1005,14 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
     else:
         cmd += ["-an"]
     output.parent.mkdir(parents=True, exist_ok=True)
-    cmd += ["-t", f"{accumulated:.3f}", "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-r", "30", "-pix_fmt", "yuv420p"]
+    planned_duration = float(plan.get("total_duration") or accumulated)
+    cmd += ["-t", f"{planned_duration:.3f}", "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-r", "30", "-pix_fmt", "yuv420p"]
     if audio:
         cmd += ["-c:a", "aac", "-b:a", "192k"]
     cmd += ["-movflags", "+faststart", str(output)]
     began = time.monotonic()
     _ffmpeg_cancel(cmd, cancel=cancel)
-    return {"render_seconds": round(time.monotonic() - began, 3), "duration": round(accumulated, 3), "width": 1080, "height": 1920,
+    return {"render_seconds": round(time.monotonic() - began, 3), "duration": round(planned_duration, 3), "width": 1080, "height": 1920,
             "fps": 30, "audio": bool(audio), "cpu_ram_vram": "NOT AVAILABLE: runtime metrics are not recorded"}
 
 
@@ -854,7 +1051,8 @@ def public_job(job: dict) -> dict:
     out["source"] = {"name": (job.get("source") or {}).get("name", ""), "duration": (job.get("source") or {}).get("duration", 0)}
     out["files"] = {}
     for name, public_name in (("result.mp4", "video"), ("edit-plan.json", "plan"), ("music-analysis.json", "music_analysis"),
-                              ("scene-analysis.json", "scenes"), ("license.json", "license"), ("metrics.json", "metrics")):
+                              ("scene-analysis.json", "scenes"), ("ai-scene-selection.json", "ai_scene_selection"),
+                              ("license.json", "license"), ("metrics.json", "metrics")):
         if _job_file(job, name).is_file():
             out["files"][public_name] = f"/media/cinematic/{job['id']}/{name}"
     return out
@@ -929,15 +1127,60 @@ def _update(job: dict, **values):
 def _ai_scene_notes(job: dict, scenes: list[dict], options: dict) -> dict:
     if not options.get("ai_scene_selector"):
         return {"status": "not_requested", "model": "", "calls": 0, "estimated_cost_usd": None}
-    candidates = [s for s in scenes if not s.get("excluded")][:12]
-    prompt = ("Select cinematic scenes only from this bounded list. Do not invent content. Return JSON list with source_id, "
-              "score 0-100, and short reason. Atmosphere: " + options["atmosphere"] + ".\n" + json.dumps(candidates, ensure_ascii=False))
+    usable = [dict(s) for s in scenes if not s.get("excluded") and float(s.get("duration") or 0) >= 0.65]
+    if not usable:
+        return {"status": "fallback_local", "model": "google/gemini-2.5-flash-lite", "calls": 0,
+                "estimated_cost_usd": None, "error": "No usable scenes for AI review."}
+    max_motion = max(float(s.get("motion_intensity") or 0) for s in usable) or 1.0
+    max_sharp = max(float(s.get("sharpness") or 0) for s in usable) or 1.0
+    for scene in usable:
+        scene["local_score"] = _scene_score(scene, options["atmosphere"], max_motion, max_sharp)
+    # Preselect by local evidence, not by film order.  The request is still
+    # bounded and each selected frame is sent as bytes below.
+    candidates = sorted(usable, key=lambda s: s["local_score"], reverse=True)[:8]
+    prompt_rows = [{k: scene.get(k) for k in ("id", "start", "end", "duration", "motion_intensity", "sharpness", "brightness", "local_score")}
+                   for scene in candidates]
+    prompt = ("Select cinematic scenes only from this bounded list and the attached representative frames. Do not invent "
+              "content and do not use paths. Return a JSON array with source_id, score 0-100, and a short reason. Rank the "
+              "array in the suggested sequence. Atmosphere: " + options["atmosphere"] + ". Candidates:\n" +
+              json.dumps(prompt_rows, ensure_ascii=False))
+    images = []
+    job_dir = Path(job["dir"]).resolve()
+    for scene in candidates:
+        rel = Path(str(scene.get("representative_frame") or ""))
+        frame = (job_dir / rel).resolve()
+        if job_dir not in frame.parents or not frame.is_file() or frame.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
+            continue
+        try:
+            raw = frame.read_bytes()
+        except OSError:
+            continue
+        if 0 < len(raw) <= 512 * 1024:
+            images.append((raw, "image/jpeg" if frame.suffix.lower() in (".jpg", ".jpeg") else "image/png"))
+    if len(images) != len(candidates):
+        return {"status": "fallback_local", "model": "google/gemini-2.5-flash-lite", "calls": 0,
+                "estimated_cost_usd": None, "error": "Representative frames were not available for the bounded AI request."}
     try:
         from . import brain
-        answer, model, spent = brain.ask_ai(prompt, {"type": "array", "items": {"type": "object"}}, purpose="Cinematic scene selector",
-                                            timeout=45, cheap=True, model_override="google/gemini-2.5-flash-lite")
-        return {"status": "available", "model": model, "calls": 1, "tokens": spent, "estimated_cost_usd": None,
-                "recommendations": answer if isinstance(answer, list) else []}
+        audit = {}
+        answer, model, spent = brain.ask_ai(
+            prompt,
+            {"type": "array", "items": {"type": "object", "properties": {"source_id": {"type": "string"},
+                                                                                "score": {"type": "number"},
+                                                                                "reason": {"type": "string"}}}},
+            purpose="Cinematic scene selector", timeout=45, cheap=True, images=images, audit=audit,
+            model_override="google/gemini-2.5-flash-lite")
+        recs = _validated_ai_recommendations({"status": "available", "candidate_ids": [s["id"] for s in candidates],
+                                              "recommendations": answer}, scenes)
+        if not recs:
+            return {"status": "fallback_local", "model": model, "calls": 1, "tokens": spent,
+                    "estimated_cost_usd": None, "error": "The AI response did not contain valid scene IDs and scores."}
+        prices = getattr(brain, "VIEWER_TOKEN_PRICES", {}).get(model)
+        estimated = round(audit.get("input_tokens", 0) * prices[0] + audit.get("output_tokens", 0) * prices[1], 8) if prices else None
+        return {"status": "available", "model": model, "calls": 1, "tokens": spent,
+                "input_tokens": audit.get("input_tokens", 0), "output_tokens": audit.get("output_tokens", 0),
+                "estimated_cost_usd": estimated, "cost_note": "Estimated text-token cost; provider billing and image-token charges are not returned.",
+                "candidate_ids": [s["id"] for s in candidates], "recommendations": answer}
     except Exception as e:  # noqa: BLE001
         return {"status": "fallback_local", "model": "google/gemini-2.5-flash-lite", "calls": 1, "error": str(e)[:240], "estimated_cost_usd": None}
 
@@ -983,7 +1226,7 @@ def _run_job(job: dict):
                 warnings.append("Auto music did not find a confirmed eligible library track; Original Audio was used.")
             _update(job, stage="Building edit plan", progress=0.45, warnings=warnings, selection_reason=reason,
                     selected_music={k: v for k, v in (music or {}).items() if k != "analysis"})
-            plan = make_plan(source, source_info, scenes, options, music, music_analysis, reason, warnings)
+            plan = make_plan(source, source_info, scenes, options, music, music_analysis, reason, warnings, ai_notes=ai_notes)
             plan_errors = validate_plan(plan, source_info["duration"])
             if plan_errors:
                 raise ValueError("Invalid edit plan: " + " ".join(plan_errors))

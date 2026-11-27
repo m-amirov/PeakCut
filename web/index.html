@@ -3522,11 +3522,12 @@ function drawCinematic() {
       </div>
       <div class="cin-checks">
         <label><input id="ce_beat" type="checkbox" checked> Beat Sync</label><label><input id="ce_zoom" type="checkbox" checked> Dynamic Zoom</label>
-        <label><input id="ce_grade" type="checkbox" checked> Cinematic Color Grading</label><label><input id="ce_reframe" type="checkbox" checked> Smart Reframe</label>
-        <label><input id="ce_trans" type="checkbox" checked> Smooth Transitions</label><label><input id="ce_speed" type="checkbox"> Speed Ramp</label>
+        <label><input id="ce_grade" type="checkbox" checked> Cinematic Color Grading</label><label><input id="ce_reframe" type="checkbox" checked> Smart Reframe (saliency)</label>
+        <label><input id="ce_trans" type="checkbox" checked> Smooth Transitions</label><label><input id="ce_speed" type="checkbox"> Gentle Speed Variation</label>
         <label><input id="ce_dialogue" type="checkbox"> Keep Original Dialogue</label><label><input id="ce_duck" type="checkbox" checked> Audio Ducking</label>
+        <label><input id="ce_ai" type="checkbox"> AI Scene Review (bounded)</label>
       </div>
-      <p class="cin-note" style="margin-top:14px">Auto selection never uses an unconfirmed track or downloads music. If none is eligible, the edit uses Original Audio and records the reason.</p>
+      <p class="cin-note" style="margin-top:14px">Smart Reframe uses a local visual-saliency center; face/character tracking is unavailable. Gentle Speed Variation changes speed per scene, not as an intra-scene optical-flow ramp. AI Scene Review sends at most eight representative frames and falls back locally if unavailable. Auto selection never uses an unconfirmed track or downloads music. If none is eligible, the edit uses Original Audio and records the reason.</p>
       <div class="cin-actions"><button type="button" class="btn primary" data-ce="create">Create Cinematic Edit</button><button type="button" class="btn" data-ce="refresh">Refresh</button></div>
     </section>
     <section class="card cin-lib"><h2>Music Library</h2><p class="cin-note">Local only · <a href="https://studio.youtube.com/" target="_blank" rel="noopener">YouTube Audio Library</a> · <a href="https://pixabay.com/music/" target="_blank" rel="noopener">Pixabay Music</a>. A catalogue listing is not proof of commercial rights.</p>
@@ -3548,7 +3549,7 @@ function drawCinematic() {
 function ceJobHtml(j) {
   const done = j.status === "done", running = ["queued", "running"].includes(j.status), pct = Math.round((j.progress || 0) * 100);
   const files = j.files || {};
-  return `<article class="cin-job"><div>${done && files.video ? `<video controls preload="metadata" src="${esc(files.video)}"></video>` : `<div class="empty" style="min-height:220px;display:grid;place-items:center">${esc(j.stage || j.status)}</div>`}</div><div><h3>${esc(j.source?.name || "Cinematic edit")}</h3><p class="cin-note">${esc(j.stage || j.status)} · ${pct}%${j.selection_reason ? `<br>${esc(j.selection_reason)}` : ""}</p>${running ? `<div class="bar"><i style="width:${pct}%"></i></div><button type="button" class="btn sm danger" data-ce="cancel" data-id="${esc(j.id)}">Cancel</button>` : ""}${j.status === "error" ? `<p class="bad">${esc(j.error || "The edit stopped.")}</p>` : ""}${j.warnings?.length ? `<p class="cin-note">${j.warnings.map(esc).join("<br>")}</p>` : ""}<div class="cin-actions">${done && files.video ? `<a class="btn sm primary" href="${esc(files.video)}?download=1">Download MP4</a><a class="btn sm" href="${esc(files.plan)}" target="_blank" rel="noopener">edit-plan.json</a><a class="btn sm" href="${esc(files.music_analysis)}" target="_blank" rel="noopener">music-analysis.json</a><a class="btn sm" href="${esc(files.scenes)}" target="_blank" rel="noopener">Scene analysis</a><button type="button" class="btn sm" data-ce="rerender" data-id="${esc(j.id)}">Render again</button>` : ""}</div></div></article>`;
+  return `<article class="cin-job"><div>${done && files.video ? `<video controls preload="metadata" src="${esc(files.video)}"></video>` : `<div class="empty" style="min-height:220px;display:grid;place-items:center">${esc(j.stage || j.status)}</div>`}</div><div><h3>${esc(j.source?.name || "Cinematic edit")}</h3><p class="cin-note">${esc(j.stage || j.status)} · ${pct}%${j.selection_reason ? `<br>${esc(j.selection_reason)}` : ""}</p>${running ? `<div class="bar"><i style="width:${pct}%"></i></div><button type="button" class="btn sm danger" data-ce="cancel" data-id="${esc(j.id)}">Cancel</button>` : ""}${j.status === "error" ? `<p class="bad">${esc(j.error || "The edit stopped.")}</p>` : ""}${j.warnings?.length ? `<p class="cin-note">${j.warnings.map(esc).join("<br>")}</p>` : ""}<div class="cin-actions">${done && files.video ? `<a class="btn sm primary" href="${esc(files.video)}?download=1">Download MP4</a><a class="btn sm" href="${esc(files.plan)}" target="_blank" rel="noopener">edit-plan.json</a><a class="btn sm" href="${esc(files.music_analysis)}" target="_blank" rel="noopener">music-analysis.json</a><a class="btn sm" href="${esc(files.scenes)}" target="_blank" rel="noopener">Scene analysis</a>${files.ai_scene_selection ? `<a class="btn sm" href="${esc(files.ai_scene_selection)}" target="_blank" rel="noopener">AI scene review</a>` : ""}${files.license ? `<a class="btn sm" href="${esc(files.license)}" target="_blank" rel="noopener">License</a>` : ""}${files.metrics ? `<a class="btn sm" href="${esc(files.metrics)}" target="_blank" rel="noopener">Metrics</a>` : ""}<button type="button" class="btn sm" data-ce="rerender" data-id="${esc(j.id)}">Render again</button>` : ""}</div></div></article>`;
 }
 async function loadCinematic() {
   const v = id => $(id)?.value || "";
@@ -3563,7 +3564,7 @@ function ceFormOptions() {
     duration: Number(val("#ce_duration")), effects_intensity: val("#ce_intensity"), music_start_offset: Number(val("#ce_offset") || 0),
     beat_sync: $("#ce_beat")?.checked, dynamic_zoom: $("#ce_zoom")?.checked, color_grading: $("#ce_grade")?.checked,
     smart_reframe: $("#ce_reframe")?.checked, smooth_transitions: $("#ce_trans")?.checked, speed_ramp: $("#ce_speed")?.checked,
-    keep_original_dialogue: $("#ce_dialogue")?.checked, audio_ducking: $("#ce_duck")?.checked};
+    keep_original_dialogue: $("#ce_dialogue")?.checked, audio_ducking: $("#ce_duck")?.checked, ai_scene_selector: $("#ce_ai")?.checked};
 }
 async function ceCreate() {
   const video = $("#ce_video")?.files?.[0]; if (!video) return toast("Choose a source video first.", "bad");

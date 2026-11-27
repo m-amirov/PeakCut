@@ -1484,7 +1484,7 @@ def music_media(tid: str):
 
 @app.get("/media/cinematic/{jid}/{name}")
 def cinematic_media(jid: str, name: str):
-    if not re.fullmatch(r"(?:result\.mp4|edit-plan\.json|music-analysis\.json|scene-analysis\.json|license\.json|metrics\.json)", name):
+    if not re.fullmatch(r"(?:result\.mp4|edit-plan\.json|music-analysis\.json|scene-analysis\.json|ai-scene-selection\.json|license\.json|metrics\.json)", name):
         raise HTTPException(404)
     job = _cinematic_or_404(jid)
     path = Path(job["dir"]) / name

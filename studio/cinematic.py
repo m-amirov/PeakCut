@@ -26,8 +26,8 @@ from . import config, ctx, media
 
 
 ANALYZER_VERSION = "cinematic-audio-1"
-PLANNER_VERSION = "cinematic-planner-2"
-SEMANTIC_VERSION = "cinematic-semantic-1"
+PLANNER_VERSION = "cinematic-planner-3"
+SEMANTIC_VERSION = "cinematic-semantic-2"
 MUSIC_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 VIDEO_EXTS = {".mp4", ".mkv", ".mov"}
 ATMOSPHERE_TAGS = {
@@ -61,10 +61,37 @@ DEFAULT_OPTIONS = {
     "edit_focus": "auto",
     "edit_focus_text": "",
     "ai_model": "google/gemini-2.5-flash-lite",
+    "edit_mode": "cinematic_story",
+    "discovery_model": "google/gemini-2.5-flash-lite",
+    "director_model": "google/gemini-2.5-flash",
+    "caption_mode": "off",
+    "caption_style": "cinematic",
+    "caption_language": "en",
+    "caption_size": 96,
+    "caption_position": "bottom",
+    "caption_color": "FFF8EE",
+    "caption_highlight_color": "FFD27A",
+    "audio_mode": "music_only",
+    "transition_style": "auto",
 }
 ALLOWED_ATMOSPHERES = set(ATMOSPHERE_TAGS)
 ALLOWED_INTENSITY = set(INTENSITY)
 EDIT_FOCUS = {"auto", "character", "event", "emotional", "action"}
+EDIT_MODES = {"cinematic_story", "character_edit", "action_edit", "emotional_edit", "phonk_aura"}
+CAPTION_MODES = {"off", "dialogue_only", "key_dialogue", "all_dialogue"}
+CAPTION_STYLES = {"cinematic", "aura_phonk", "dynamic", "movie_original"}
+CAPTION_POSITIONS = {"top", "middle", "bottom"}
+AUDIO_MODES = {"music_only", "dialogue_intro_music", "music_key_dialogue", "original_audio"}
+TRANSITION_STYLES = {"auto", "hard_cut", "selective_crossfade"}
+CAPTION_LANGUAGES = {"en", "ru", "ar"}
+PACING_PROFILES = {
+    "cinematic_story": {"name": "Cinematic", "min": 2.0, "max": 5.0, "target": 3.3},
+    "character_edit": {"name": "Character", "min": 2.0, "max": 5.0, "target": 3.5},
+    "emotional_edit": {"name": "Emotional", "min": 3.0, "max": 6.0, "target": 4.5},
+    "action_edit": {"name": "Action", "min": 0.8, "max": 2.5, "target": 1.45},
+    "phonk_aura": {"name": "Phonk / Aura", "min": 0.5, "max": 2.0, "target": 1.1},
+}
+_HEX = re.compile(r"^[0-9A-Fa-f]{6}$")
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]+")
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -177,10 +204,57 @@ def normalize_options(options: dict | None) -> dict:
     if out["edit_focus"] not in EDIT_FOCUS:
         raise ValueError("Choose a supported Edit Focus.")
     out["edit_focus_text"] = str(out.get("edit_focus_text") or "").strip()[:240]
-    model = str(out.get("ai_model") or DEFAULT_OPTIONS["ai_model"])
-    if not re.fullmatch(r"[A-Za-z0-9._/-]{3,140}", model):
-        raise ValueError("The cinematic AI model name is not valid.")
-    out["ai_model"] = model
+    out["edit_mode"] = str(out.get("edit_mode") or "cinematic_story").lower()
+    # Keep the Stage 6A option spelling usable for saved jobs while exposing
+    # the five explicit director modes in new jobs.
+    out["edit_mode"] = {"cinematic": "cinematic_story", "character": "character_edit",
+                        "action": "action_edit", "emotional": "emotional_edit",
+                        "phonk": "phonk_aura"}.get(out["edit_mode"], out["edit_mode"])
+    if out["edit_mode"] not in EDIT_MODES:
+        raise ValueError("Choose a supported cinematic edit mode.")
+    for key, fallback in (("ai_model", DEFAULT_OPTIONS["ai_model"]), ("discovery_model", DEFAULT_OPTIONS["discovery_model"]),
+                          ("director_model", DEFAULT_OPTIONS["director_model"])):
+        model = str(out.get(key) or fallback).strip()
+        if not re.fullmatch(r"[A-Za-z0-9._/-]{3,140}", model):
+            raise ValueError("The cinematic AI model name is not valid.")
+        out[key] = model
+    if out["ai_model"] != DEFAULT_OPTIONS["ai_model"] and "discovery_model" not in raw:
+        out["discovery_model"] = out["ai_model"]
+    out["caption_mode"] = str(out.get("caption_mode") or "off").lower()
+    if out["caption_mode"] not in CAPTION_MODES:
+        raise ValueError("Choose a supported cinematic caption mode.")
+    out["caption_style"] = str(out.get("caption_style") or "cinematic").lower()
+    if out["caption_style"] not in CAPTION_STYLES:
+        raise ValueError("Choose a supported cinematic caption style.")
+    out["caption_language"] = str(out.get("caption_language") or "en").lower()
+    if out["caption_language"] not in CAPTION_LANGUAGES:
+        raise ValueError("This caption language is not supported by the local ASR registry.")
+    try:
+        out["caption_size"] = int(out.get("caption_size") or 96)
+    except (TypeError, ValueError):
+        raise ValueError("Caption size must be a whole number.")
+    out["caption_size"] = max(60, min(140, out["caption_size"]))
+    out["caption_position"] = str(out.get("caption_position") or "bottom").lower()
+    if out["caption_position"] not in CAPTION_POSITIONS:
+        raise ValueError("Choose a supported caption position.")
+    for key, fallback in (("caption_color", "FFF8EE"), ("caption_highlight_color", "FFD27A")):
+        value = str(out.get(key) or fallback).lstrip("#").upper()
+        if not _HEX.fullmatch(value):
+            raise ValueError("Caption colours must be six-digit hexadecimal values.")
+        out[key] = value
+    out["audio_mode"] = str(out.get("audio_mode") or "music_only").lower()
+    if out["audio_mode"] not in AUDIO_MODES:
+        raise ValueError("Choose a supported cinematic audio mode.")
+    if out["keep_original_dialogue"] and out["audio_mode"] == "music_only":
+        out["audio_mode"] = "music_key_dialogue"
+    if out["music_source"] == "original_audio":
+        out["audio_mode"] = "original_audio"
+    if out["audio_mode"] == "original_audio":
+        out["music_source"] = "original_audio"
+        out["keep_original_dialogue"] = True
+    out["transition_style"] = str(out.get("transition_style") or "auto").lower()
+    if out["transition_style"] not in TRANSITION_STYLES:
+        raise ValueError("Choose a supported transition style.")
     out["music_track_id"] = str(out.get("music_track_id") or "")[:80]
     out["music_upload_id"] = str(out.get("music_upload_id") or "")[:80]
     out["music_genre"] = _SAFE.sub("", str(out.get("music_genre") or "").lower())[:40]
@@ -414,7 +488,7 @@ def _saliency_center(path: Path) -> tuple[float, float, str]:
         return 0.5, 0.5, "center_fallback"
 
 
-def _focus_center(path: Path) -> tuple[float, float, str, bool]:
+def _focus_center(path: Path) -> tuple[float, float, str, bool, dict | None]:
     """Use a light OpenCV face detector when available, then saliency/center fallback."""
     saliency_x, saliency_y, saliency_mode = _saliency_center(path)
     try:
@@ -426,10 +500,13 @@ def _focus_center(path: Path) -> tuple[float, float, str, bool]:
             if len(faces):
                 face = max(faces, key=lambda x: int(x[2]) * int(x[3]))
                 x, y, w, h = [int(v) for v in face]
-                return round((x + w / 2) / max(1, image.shape[1]), 4), round((y + h / 2) / max(1, image.shape[0]), 4), "face_haar", True
+                width, height = max(1, image.shape[1]), max(1, image.shape[0])
+                return (round((x + w / 2) / width, 4), round((y + h / 2) / height, 4),
+                        "face_haar", True, {"x": round(x / width, 4), "y": round(y / height, 4),
+                                             "w": round(w / width, 4), "h": round(h / height, 4)})
     except Exception:  # noqa: BLE001 - optional local detector, never a hard dependency
         pass
-    return saliency_x, saliency_y, saliency_mode, False
+    return saliency_x, saliency_y, saliency_mode, False, None
 
 
 def _frame_features(path: Path, out_dir: Path, cancel=None) -> list[dict]:
@@ -488,21 +565,64 @@ def _frame_features(path: Path, out_dir: Path, cancel=None) -> list[dict]:
                            "-vf", "scale=320:-2", "-q:v", "5", str(frame_dir / frame_name)], timeout=30)
             except Exception:
                 frame_name = ""
-        reframe_x, reframe_y, reframe_mode, face_detected = _focus_center(frame_dir / frame_name) if frame_name else (0.5, 0.5, "center_fallback", False)
+        reframe_x, reframe_y, reframe_mode, face_detected, face_box = _focus_center(frame_dir / frame_name) if frame_name else (0.5, 0.5, "center_fallback", False, None)
         scenes.append({"id": f"scene-{n:04d}", "start": round(a, 3), "end": round(b, 3), "duration": round(b - a, 3),
                        "representative_frame": str((Path("frames") / frame_name).as_posix()) if frame_name else "",
                        "motion_intensity": round(float(np.mean([x["motion"] for x in rows])), 6),
                        "sharpness": round(float(np.mean([x["sharpness"] for x in rows])), 4),
                        "brightness": round(float(np.mean([x["brightness"] for x in rows])), 6),
                        "reframe_center_x": reframe_x, "reframe_center_y": reframe_y, "reframe_mode": reframe_mode,
-                       "focus_mode": reframe_mode, "face_detected": face_detected,
+                       "focus_mode": reframe_mode, "face_detected": face_detected, "face_box": face_box,
                        "black_frame": black >= 0.94, "excluded": excluded,
                        "exclusion_reason": "black-frame" if black >= 0.94 else "too-short" if b - a < 0.65 else ""})
     return scenes
 
 
+def _visual_signature(path: Path) -> np.ndarray | None:
+    """Small appearance descriptor for grouping, never treated as identity."""
+    try:
+        from PIL import Image
+        image = np.asarray(Image.open(path).convert("RGB").resize((16, 10)), dtype=np.float32) / 255.0
+        vector = image.reshape(-1)
+        vector -= vector.mean()
+        norm = float(np.linalg.norm(vector))
+        return vector / norm if norm > 1e-6 else None
+    except Exception:  # noqa: BLE001 - grouping is an optional discovery hint
+        return None
+
+
+def _assign_visual_groups(scenes: list[dict], output_dir: Path) -> list[dict]:
+    """Group visually similar anchors to improve focus retention without naming people."""
+    centroids: list[np.ndarray] = []
+    counts: list[int] = []
+    for scene in scenes:
+        relative = str(scene.get("representative_frame") or "")
+        frame = (output_dir / relative).resolve() if relative else None
+        signature = _visual_signature(frame) if frame and output_dir.resolve() in frame.parents and frame.is_file() else None
+        group = None
+        if signature is not None and centroids:
+            similarities = [float(np.dot(signature, centroid)) for centroid in centroids]
+            best = max(range(len(similarities)), key=similarities.__getitem__)
+            if similarities[best] >= 0.82:
+                group = best
+                count = counts[best]
+                centroids[best] = (centroids[best] * count + signature) / (count + 1)
+                norm = float(np.linalg.norm(centroids[best])) or 1.0
+                centroids[best] /= norm
+                counts[best] += 1
+        if group is None:
+            group = len(centroids)
+            if signature is not None:
+                centroids.append(signature)
+                counts.append(1)
+        scene["visual_group_id"] = f"visual-group-{group + 1:02d}"
+        scene["visual_group_method"] = "appearance_anchor_heuristic" if signature is not None else "unavailable"
+    return scenes
+
+
 def analyze_scenes(path: Path, output_dir: Path, cancel=None) -> list[dict]:
     scenes = _frame_features(path, output_dir, cancel=cancel)
+    scenes = _assign_visual_groups(scenes, output_dir)
     _json_write(output_dir / "scene-analysis.json", {"version": "cinematic-scenes-1", "source": path.name, "scenes": scenes})
     return scenes
 
@@ -522,13 +642,13 @@ def _read_existing_dialogue(job: dict) -> list[dict]:
             if not isinstance(row, dict):
                 continue
             try:
-                start = float(row.get("start", row.get("start_time")))
-                end = float(row.get("end", row.get("end_time", start)))
+                start = float(row.get("start", row.get("start_time", row.get("s"))))
+                end = float(row.get("end", row.get("end_time", row.get("e", start))))
             except (TypeError, ValueError):
                 continue
-            text = str(row.get("text", row.get("word", row.get("content", ""))) or "").strip()
+            text = str(row.get("text", row.get("word", row.get("content", row.get("w", "")))) or "").strip()
             if text and end >= start:
-                out.append({"start": start, "end": end, "text": text})
+                out.append({"start": start, "end": end, "text": text, "w": text, "s": start, "e": end})
         if out:
             return out
     return []
@@ -561,6 +681,10 @@ def analyze_events(scenes: list[dict], output_dir: Path, dialogue: list[dict] | 
         focus_x = [float(x["reframe_center_x"]) for x in shots if x.get("reframe_center_x") is not None]
         focus_y = [float(x["reframe_center_y"]) for x in shots if x.get("reframe_center_y") is not None]
         face_count = sum(1 for x in shots if x.get("focus_mode") == "face_haar")
+        group_ids = [str(x.get("visual_group_id") or "") for x in shots if x.get("visual_group_id")]
+        group_counts = {group: group_ids.count(group) for group in set(group_ids)}
+        dominant_group = max(group_counts, key=group_counts.get) if group_counts else ""
+        boxes = [x.get("face_box") for x in shots if isinstance(x.get("face_box"), dict)]
         # This is only a bounded local discovery hint. It is deliberately not
         # described as semantic understanding; AI or the explicit focus text
         # supplies that layer when available.
@@ -572,7 +696,9 @@ def analyze_events(scenes: list[dict], output_dir: Path, dialogue: list[dict] | 
                        "dialogue": dialogue_text, "face_shot_count": face_count,
                        "reframe_center_x": round(float(np.median(focus_x)) if focus_x else 0.5, 4),
                        "reframe_center_y": round(float(np.median(focus_y)) if focus_y else 0.5, 4),
+                       "face_box": boxes[len(boxes) // 2] if boxes else None,
                        "focus_mode": "face_haar" if face_count else "saliency_or_center",
+                       "visual_group_ids": sorted(group_counts), "dominant_visual_group": dominant_group,
                        "local_discovery_score": round(local_score, 6), "shot_count": len(shots)})
         current.clear()
 
@@ -935,10 +1061,114 @@ def _phase_at(phases: list[dict], at: float) -> dict:
     return next((x for x in phases if float(x["start"]) <= at < float(x["end"])), phases[-1])
 
 
-def _select_event_arc(events: list[dict], notes: dict | None, duration: float) -> tuple[list[dict], str, str]:
+def _pacing_profile(options: dict) -> dict:
+    return dict(PACING_PROFILES.get(str(options.get("edit_mode") or "cinematic_story"), PACING_PROFILES["cinematic_story"]))
+
+
+def _transition_duration(options: dict, phase: str, incoming_index: int, shot_length: float) -> float:
+    mode = str(options.get("edit_mode") or "cinematic_story")
+    style = str(options.get("transition_style") or "auto")
+    if style == "hard_cut" or mode in {"character_edit", "action_edit", "phonk_aura"}:
+        return 0.0
+    if style == "auto" and not options.get("smooth_transitions", True):
+        return 0.0
+    if incoming_index <= 0 or shot_length < 2.0:
+        return 0.0
+    # Crossfades are a phrase-level punctuation mark, not the default between
+    # every selected shot. Keep them out of the climax and cap the overlap.
+    if phase not in {"hook", "resolution", "natural"} and mode != "emotional_edit":
+        return 0.0
+    if mode == "emotional_edit" or phase in {"resolution", "natural"}:
+        return round(min(0.28, shot_length / 4.0), 3)
+    return round(min(0.18, shot_length / 5.0), 3)
+
+
+def _shot_expressiveness(shot: dict, event: dict, options: dict, ai_score: float = 0.0) -> float:
+    mode = str(options.get("edit_mode") or "cinematic_story")
+    motion = min(1.0, float(shot.get("motion_intensity") or 0) * 4.0)
+    sharp = min(1.0, float(shot.get("sharpness") or 0) / 300.0)
+    face = 1.0 if shot.get("face_detected") or shot.get("focus_mode") == "face_haar" else 0.0
+    dialogue = 1.0 if event.get("dialogue") else 0.0
+    length = min(1.0, float(shot.get("duration") or 0) / 5.0)
+    if mode == "emotional_edit":
+        return face * 0.34 + dialogue * 0.34 + length * 0.18 + sharp * 0.14 + ai_score * 0.2
+    if mode in {"action_edit", "phonk_aura"}:
+        return motion * 0.42 + sharp * 0.26 + face * 0.12 + ai_score * 0.2
+    return face * 0.3 + dialogue * 0.25 + sharp * 0.18 + length * 0.17 + ai_score * 0.2
+
+
+def _select_paced_shots(events: list[dict], scenes: list[dict], arc: list[dict], notes: dict | None,
+                        options: dict, duration: float) -> list[dict]:
+    """Select expressive approved shots, rather than rendering every detected shot."""
+    by_id = {str(x.get("id")): x for x in scenes}
+    recommendations = _validated_event_recommendations(notes, events)
+    candidates = []
+    seen = set()
+    for event in arc:
+        event_score = float(recommendations.get(str(event.get("id")), {}).get("score") or 0) / 100.0
+        event_shots = []
+        for shot_id in event.get("shot_ids") or []:
+            shot = by_id.get(str(shot_id))
+            if not shot or shot.get("excluded") or float(shot.get("duration") or 0) < 0.65 or shot["id"] in seen:
+                continue
+            score = _shot_expressiveness(shot, event, options, event_score)
+            event_shots.append((score, shot))
+            seen.add(shot["id"])
+        if event_shots:
+            event_shots.sort(key=lambda x: (x[0], float(x[1].get("duration") or 0)), reverse=True)
+            candidates.append((event, event_shots))
+    if not candidates:
+        return []
+    profile = _pacing_profile(options)
+    limit = int(math.ceil(duration / float(profile["target"])))
+    limit = min(limit, 24 if options.get("edit_mode") in {"action_edit", "phonk_aura"} else 16)
+    selected = []
+    # One anchor per event first keeps a story/character edit visually varied.
+    for event, ranked in candidates:
+        if len(selected) >= limit:
+            break
+        selected.append((event, ranked[0][1]))
+    # Action/phonk can use a second expressive shot from a strong event, but
+    # never spend the entire timeline on every detected micro-shot.
+    if len(selected) < limit and options.get("edit_mode") in {"action_edit", "phonk_aura"}:
+        extras = [(score, event, shot) for event, ranked in candidates for score, shot in ranked[1:]]
+        for _score, event, shot in sorted(extras, reverse=True, key=lambda x: x[0]):
+            if len(selected) >= limit:
+                break
+            selected.append((event, shot))
+    if options.get("edit_mode") == "character_edit":
+        # A character edit may be non-contiguous, but the output remains easy
+        # to follow when the chosen source anchors are ordered chronologically.
+        selected.sort(key=lambda x: float(x[1].get("start") or 0))
+    else:
+        selected.sort(key=lambda x: float(x[1].get("start") or 0))
+    return [shot for _event, shot in selected]
+
+
+def _select_event_arc(events: list[dict], notes: dict | None, duration: float, options: dict | None = None) -> tuple[list[dict], str, str]:
+    options = options if isinstance(options, dict) else {}
     if not events:
         return [], "", "fallback_local"
     recommendations = _validated_event_recommendations(notes, events)
+    mode = str(options.get("edit_mode") or "cinematic_story")
+    if mode == "character_edit":
+        target_events = max(3, min(10, int(math.ceil(duration / 4.0))))
+        ranked = sorted(events, key=lambda event: (
+            float(recommendations.get(str(event.get("id")), {}).get("score") or 0),
+            float(event.get("face_shot_count") or 0),
+            float(event.get("local_discovery_score") or 0)), reverse=True)
+        chosen = []
+        groups = []
+        for event in ranked:
+            group = str(event.get("dominant_visual_group") or "")
+            if group and group not in groups:
+                groups.append(group)
+            if len(chosen) >= target_events:
+                break
+            chosen.append(event)
+        chosen = sorted(chosen, key=lambda event: float(event.get("start") or 0))
+        concept = str((notes or {}).get("concept") or "Character Edit: visually related anchors across the source")[:300]
+        return chosen, concept, "ai_character" if recommendations else "local_character"
     if recommendations:
         target = duration + 1.0
         positions = {str(event["id"]): index for index, event in enumerate(events)}
@@ -993,17 +1223,11 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
                         music: dict | None, music_analysis: dict | None, reason: str, warnings: list[str],
                         semantic_notes: dict | None) -> dict:
     duration = min(float(options["duration"]), float(source_info["duration"]))
-    arc, concept, semantic_status = _select_event_arc(events, semantic_notes, duration)
-    by_id = {str(x["id"]): x for x in scenes}
-    shot_ids = [shot_id for event in arc for shot_id in event.get("shot_ids") or []]
-    shots = [by_id[x] for x in shot_ids if x in by_id and not by_id[x].get("excluded") and float(by_id[x].get("duration") or 0) >= 0.65]
+    arc, concept, semantic_status = _select_event_arc(events, semantic_notes, duration, options)
+    shots = _select_paced_shots(events, scenes, arc, semantic_notes, options, duration)
     if not shots:
         raise RuntimeError("No approved shots were found in the selected semantic event sequence.")
-    transition = 0.3 if options["smooth_transitions"] and len(shots) > 1 else 0.0
-    available = sum(float(x["duration"]) for x in shots)
-    if available - transition * max(0, len(shots) - 1) < duration - 0.05:
-        transition = 0.0
-        warnings.append("The selected coherent event sequence does not contain enough approved shot material for the requested duration; the result was shortened.")
+    profile = _pacing_profile(options)
     phases = _music_phases(music_analysis, duration)
     sync_profile = _music_sync_profile(music_analysis, float(options["music_start_offset"]), duration, options["effects_intensity"])
     if not options["beat_sync"]:
@@ -1013,7 +1237,7 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
     # usable marker is the boundary itself; the following segment begins at
     # exactly that frame.  The preceding segment gets the crossfade overlap,
     # so validation and FFmpeg use the same definition of the sync moment.
-    boundaries, boundary_refs, speeds, selected_shots = [0.0], [None], [], []
+    boundaries, boundary_refs, speeds, selected_shots, outgoing = [0.0], [None], [], [], []
     rendered = 0.0
     for shot in shots:
         if rendered >= duration - 0.02:
@@ -1022,8 +1246,12 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
         speed = 1.0
         if options["speed_ramp"] and options["effects_intensity"] == "strong":
             speed = 1.04 if phase["name"] == "climax" else 0.98
-        max_visible_end = rendered + float(shot["duration"]) / speed - transition
-        target_end = min(duration, rendered + float(phase["pace"]))
+        source_length = float(shot["duration"])
+        target_pace = min(profile["max"], max(profile["min"], source_length))
+        if phase["name"] == "climax" and options.get("edit_mode") in {"action_edit", "phonk_aura"}:
+            target_pace = max(profile["min"], target_pace * 0.72)
+        max_visible_end = rendered + source_length / speed
+        target_end = min(duration, rendered + target_pace, max_visible_end)
         marker = None
         if options["beat_sync"] and markers:
             candidates = [x for x in markers if float(x["timeline"]) > rendered + 0.65 and
@@ -1034,51 +1262,67 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
                 if abs(float(nearest["timeline"]) - target_end) <= max(1.35, float(phase["pace"]) * 2.0):
                     target_end, marker = float(nearest["timeline"]), nearest
         target_end = min(duration, target_end, max_visible_end)
-        if target_end - rendered < 0.65:
+        if target_end - rendered < max(0.5, profile["min"] * 0.45):
             continue
+        transition = _transition_duration(options, _phase_at(phases, min(duration, target_end))["name"],
+                                          len(selected_shots) + 1, source_length)
+        target_end = min(duration, target_end, max_visible_end - transition)
+        if target_end - rendered < max(0.5, profile["min"] * 0.45):
+            transition = 0.0
+            target_end = min(duration, max_visible_end)
         boundaries.append(round(target_end, 6))
         boundary_refs.append(marker if marker and abs(float(marker["timeline"]) - target_end) <= 0.02 else None)
         speeds.append(speed)
         selected_shots.append(shot)
+        outgoing.append(transition)
         rendered = target_end
     if not speeds:
         raise RuntimeError("No approved shot contained enough source material for the selected duration.")
     segments, rendered = [], 0.0
+    recommendations = _validated_event_recommendations(semantic_notes, events)
     for index, shot in enumerate(selected_shots):
         timeline_in = float(boundaries[index])
         visible_end = float(boundaries[index + 1])
-        has_next = index < len(speeds) - 1
-        timeline_out = visible_end + (transition if has_next else 0.0)
+        transition_in = float(outgoing[index - 1]) if index else 0.0
+        transition_out = float(outgoing[index]) if index < len(outgoing) - 1 else 0.0
+        timeline_out = visible_end + transition_out
         speed = speeds[index]
         phase = _phase_at(phases, timeline_in)
         source_in = float(shot["start"])
-        source_out = min(float(shot["end"]), source_in + (timeline_out - timeline_in) * speed)
+        source_out = min(float(shot["end"]), float(source_info["duration"]), source_in + (timeline_out - timeline_in) * speed)
         actual = (source_out - source_in) / speed
         if actual < 0.65:
             continue
         marker = boundary_refs[index]
         event_id = next((event["id"] for event in arc if shot["id"] in (event.get("shot_ids") or [])), "")
         event = next((event for event in arc if event["id"] == event_id), {})
-        focus_x = float(shot.get("reframe_center_x") or event.get("reframe_center_x") or 0.5)
-        focus_y = float(shot.get("reframe_center_y") or event.get("reframe_center_y") or 0.5)
-        ai_rec = _validated_event_recommendations(semantic_notes, events).get(event_id, {}) if semantic_status == "ai_semantic" else {}
+        focus_x = float(event.get("reframe_center_x") or shot.get("reframe_center_x") or 0.5)
+        focus_y = float(event.get("reframe_center_y") or shot.get("reframe_center_y") or 0.5)
+        if options.get("edit_mode") != "character_edit":
+            focus_x = float(shot.get("reframe_center_x") or focus_x)
+            focus_y = float(shot.get("reframe_center_y") or focus_y)
+        face_box = shot.get("face_box") or event.get("face_box")
+        crop_mode = "face_or_person" if options["smart_reframe"] and (shot.get("face_detected") or face_box) else "letterbox_safe"
+        ai_rec = recommendations.get(event_id, {}) if semantic_status in {"ai_semantic", "ai_character"} else {}
         segments.append({"source_id": shot["id"], "event_id": event_id, "source_in": round(source_in, 3), "source_out": round(source_out, 3),
                          "approved_source_start": round(float(shot["start"]), 3), "approved_source_end": round(float(shot["end"]), 3),
                          "timeline_in": round(timeline_in, 3), "timeline_out": round(timeline_out, 3), "playback_speed": speed,
-                         "crop": {"mode": "face_or_saliency" if options["smart_reframe"] else "center", "smart_reframe": options["smart_reframe"],
-                                  "reframe_limit": "Light Haar face detection when visible; saliency/center fallback, no full-body tracker",
-                                  "center_x": round(focus_x, 4), "center_y": round(focus_y, 4), "zoom": 1.05 if options["dynamic_zoom"] else 1.0},
-                         "transition": {"type": "crossfade" if transition and index else "hard_cut", "duration": transition if index else 0.0},
+                         "crop": {"mode": crop_mode, "smart_reframe": options["smart_reframe"],
+                                  "reframe_limit": "Smoothed face anchor when available; letterbox fallback when a safe crop is not proven",
+                                  "center_x": round(max(0.12, min(0.88, focus_x)), 4), "center_y": round(max(0.12, min(0.88, focus_y)), 4),
+                                  "face_box": face_box, "zoom": 1.05 if options["dynamic_zoom"] and crop_mode != "letterbox_safe" else 1.0},
+                         "transition": {"type": "crossfade" if transition_in else "hard_cut", "duration": round(transition_in, 3)},
                          "effects": {"color_grading": options["color_grading"], "intensity": options["effects_intensity"],
                                      "dynamic_zoom": "time-varying-scale" if options["dynamic_zoom"] else "off",
                                      "speed_ramp": "per-segment-speed-variation" if options["speed_ramp"] else "off"},
                          "music_phase": phase["name"], "music_beat_reference": marker.get("music") if marker else None,
                          "sync_point": round(timeline_in, 3) if marker else None,
-                         "sync_point_type": "crossfade_start" if marker and transition else "hard_cut" if marker else "natural",
+                         "sync_point_type": "crossfade_start" if marker and transition_in else "hard_cut" if marker else "natural",
                          "sync_error_frames": round((timeline_in - float(marker["timeline"])) * 30, 3) if marker else None,
-                         "selection_reason": f"{semantic_status}; concept={concept}; event={event_id}; phase={phase['name']}; "
-                                             f"ai={ai_rec.get('score')}; dialogue={bool(event.get('dialogue'))}; face_mode={event.get('focus_mode')}"})
-        rendered += actual - (transition if index else 0.0)
+                         "caption_window": {"start": round(timeline_in + transition_in, 3), "end": round(min(visible_end, timeline_in + actual), 3)},
+                         "selection_reason": f"{semantic_status}; mode={options.get('edit_mode')}; concept={concept}; event={event_id}; phase={phase['name']}; "
+                                             f"ai={ai_rec.get('score')}; dialogue={bool(event.get('dialogue'))}; visual_group={shot.get('visual_group_id')}"})
+        rendered += actual - transition_in
     # A final crossfade-capacity estimate can leave a few frames unused even
     # though the last approved shot still has source headroom.  Extend only
     # inside that shot; never borrow an unapproved neighbour to hit duration.
@@ -1093,6 +1337,7 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
     if rendered < duration - (2.0 / 30.0 + 0.01):
         warnings.append("The selected event sequence ended before the requested duration; no unapproved neighboring shots were added.")
     total = round(min(rendered, duration), 3)
+    transition_max = max((float((segment.get("transition") or {}).get("duration") or 0) for segment in segments), default=0.0)
     return {"planner_version": PLANNER_VERSION, "semantic_version": SEMANTIC_VERSION, "source_name": source.name,
             "source_duration": round(source_info["duration"], 3), "track_id": (music or {}).get("track_id", ""),
             "track_title": (music or {}).get("title", "Original Audio" if options["music_source"] == "original_audio" else ""),
@@ -1100,14 +1345,16 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
             "music_duration": round(float((music_analysis or {}).get("duration") or 0), 3),
             "music_segment": {"start": round(float(options["music_start_offset"]), 3), "end": round(float(options["music_start_offset"]) + total, 3)} if music else None,
             "atmosphere": options["atmosphere"], "intensity": options["effects_intensity"], "requested_duration": options["duration"],
-            "total_duration": total, "transition_overlap": transition, "selection_reason": reason,
-            "semantic_concept": concept, "semantic_status": semantic_status, "selected_event_ids": [x["id"] for x in arc],
+            "total_duration": total, "transition_overlap": transition_max, "selection_reason": reason,
+            "edit_mode": options.get("edit_mode"), "pacing_profile": profile,
+            "semantic_concept": concept, "target_character": (semantic_notes or {}).get("target_character", "") if isinstance(semantic_notes, dict) else "",
+            "semantic_status": semantic_status, "selected_event_ids": [x["id"] for x in arc],
             "warnings": warnings, "segments": segments, "beat_sync": bool(options["beat_sync"]),
             "sync_mode": sync_profile.get("mode", "none") if options["beat_sync"] else "off",
             "rhythm_confidence": sync_profile.get("confidence", 0.0),
-            "crossfade_sync_definition": "beat-aligned at crossfade start; visual blend spans the following overlap" if transition else "not applicable",
+            "crossfade_sync_definition": "beat-aligned at crossfade start; visual blend spans the following overlap" if transition_max else "not applicable",
             "ai_scene_selector": bool(options.get("ai_scene_selector")),
-            "ai_recommendations_applied": semantic_status == "ai_semantic"}
+            "ai_recommendations_applied": semantic_status in {"ai_semantic", "ai_character"}}
 
 
 def make_plan(source: Path, source_info: dict, scenes: list[dict], options: dict, music: dict | None, music_analysis: dict | None,
@@ -1225,7 +1472,7 @@ def make_plan(source: Path, source_info: dict, scenes: list[dict], options: dict
 
 
 def validate_plan(plan: dict, source_duration: float) -> list[str]:
-    if str(plan.get("planner_version", "")).endswith("-2"):
+    if str(plan.get("planner_version", "")).startswith("cinematic-planner-"):
         errors, rendered, previous_out = [], 0.0, 0.0
         segments = plan.get("segments") if isinstance(plan, dict) else None
         if not isinstance(segments, list) or not segments:
@@ -1285,6 +1532,171 @@ def validate_plan(plan: dict, source_duration: float) -> list[str]:
     return errors
 
 
+def _caption_style(options: dict) -> dict:
+    presets = {
+        "cinematic": {"anim": "fill", "font": "Poppins ExtraBold", "size": 94, "color": "FFF8EE", "hi": "FFD27A", "key": "FFD27A", "outline": 3, "shadow": True, "per": 4, "upper": False, "pop": 104},
+        "aura_phonk": {"anim": "pop", "font": "Anton", "size": 112, "color": "FFFFFF", "hi": "FF4FD8", "key": "FFEF66", "outline": 6, "shadow": True, "per": 3, "upper": True, "pop": 110},
+        "dynamic": {"anim": "pop", "font": "Poppins ExtraBold", "size": 98, "color": "FFFFFF", "hi": "61E7FF", "key": "61E7FF", "outline": 5, "shadow": True, "per": 3, "upper": False, "pop": 108},
+        "movie_original": {"anim": "none", "font": "Poppins ExtraBold", "size": 78, "color": "FFFFFF", "hi": "FFFFFF", "key": "FFFFFF", "outline": 3, "shadow": True, "per": 5, "upper": False, "pop": 100},
+    }
+    style = dict(presets.get(options.get("caption_style"), presets["cinematic"]))
+    style["size"] = int(options.get("caption_size") or style["size"])
+    style["color"] = str(options.get("caption_color") or style["color"])
+    style["hi"] = str(options.get("caption_highlight_color") or style["hi"])
+    style["key"] = style["hi"]
+    if options.get("caption_language") == "ru":
+        style["upper"] = False
+    return style
+
+
+def _caption_y(position: str) -> int:
+    return {"top": 360, "middle": 1010, "bottom": 1510}.get(position, 1510)
+
+
+def _normalise_words(rows: list[dict] | None) -> list[dict]:
+    out = []
+    for row in rows or []:
+        try:
+            start = float(row.get("s", row.get("start", row.get("start_time"))))
+            end = float(row.get("e", row.get("end", row.get("end_time", start))))
+        except (TypeError, ValueError):
+            continue
+        text = str(row.get("w", row.get("text", row.get("word", row.get("content", "")))) or "").strip()
+        if text and end > start:
+            out.append({"w": text, "s": round(start, 3), "e": round(end, 3)})
+    return sorted(out, key=lambda x: (x["s"], x["e"]))
+
+
+def _extract_selected_words(source: Path, plan: dict, options: dict, job: dict, existing_words: list[dict], cancel=None) -> tuple[list[dict], str, list[str]]:
+    warnings = []
+    if options.get("caption_mode") == "off" or options.get("audio_mode") == "music_only":
+        return [], "disabled_for_music_only" if options.get("audio_mode") == "music_only" else "disabled", warnings
+    words = _normalise_words(existing_words)
+    source_kind = "existing_local_words" if words else "local_asr_selected_intervals"
+    cache_path = _job_file(job, "caption-asr-cache.json")
+    cache = _json_read(cache_path, {})
+    cache = cache if isinstance(cache, dict) else {}
+    if not words:
+        try:
+            from . import transcribe
+            for index, segment in enumerate(plan.get("segments") or []):
+                if cancel and cancel():
+                    raise Cancelled()
+                a, b = float(segment["source_in"]), float(segment["source_out"])
+                key = f"{options.get('caption_language')}:{a:.3f}:{b:.3f}"
+                cached = _normalise_words(cache.get(key))
+                if cached:
+                    words.extend(cached)
+                    continue
+                wav = config.TMP_DIR / f"cinematic-caption-{uuid.uuid4().hex}.wav"
+                try:
+                    media.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{a:.3f}", "-t", f"{max(0.1, b - a):.3f}",
+                               "-i", str(source), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)], timeout=300)
+                    pcm = media.load_audio(wav)
+                    local = _normalise_words(transcribe.transcribe(pcm, lang=options.get("caption_language") or "en"))
+                    shifted = [{"w": x["w"], "s": round(a + x["s"], 3), "e": round(min(b, a + x["e"]), 3)} for x in local]
+                    cache[key] = shifted
+                    words.extend(shifted)
+                except Exception as e:  # noqa: BLE001 - captions remain optional; the evidence records the gap
+                    warnings.append(f"ASR was unavailable for selected scene {index + 1}: {str(e)[:160]}")
+                finally:
+                    wav.unlink(missing_ok=True)
+            _json_write(cache_path, cache)
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001
+            warnings.append(f"Local ASR could not start: {str(e)[:160]}")
+    return _normalise_words(words), source_kind, warnings
+
+
+def remap_caption_words(words: list[dict], plan: dict) -> list[dict]:
+    """Map source word stamps into the final timeline, excluding transition overlap."""
+    remapped, seen = [], set()
+    segments = list(plan.get("segments") or [])
+    for index, segment in enumerate(segments):
+        source_in, source_out = float(segment["source_in"]), float(segment["source_out"])
+        timeline_in, timeline_out = float(segment["timeline_in"]), float(segment["timeline_out"])
+        speed = max(0.01, float(segment.get("playback_speed") or 1.0))
+        incoming = float((segment.get("transition") or {}).get("duration") or 0.0) if index else 0.0
+        outgoing = float((segments[index + 1].get("transition") or {}).get("duration") or 0.0) if index + 1 < len(segments) else 0.0
+        lower = timeline_in + incoming
+        upper = timeline_out - outgoing
+        for word in words:
+            start, end = float(word.get("s") or 0), float(word.get("e") or 0)
+            if end <= source_in or start >= source_out:
+                continue
+            clip_start, clip_end = max(source_in, start), min(source_out, end)
+            mapped_start = max(lower, timeline_in + (clip_start - source_in) / speed)
+            mapped_end = min(upper, timeline_in + (clip_end - source_in) / speed)
+            if mapped_end - mapped_start < 0.02:
+                continue
+            text_value = str(word.get("w", word.get("text", "")) or "").strip()
+            identity = (text_value.lower(), round(mapped_start, 2))
+            if not text_value or identity in seen:
+                continue
+            seen.add(identity)
+            remapped.append({"w": text_value, "s": round(mapped_start, 3), "e": round(mapped_end, 3),
+                             "source_segment": str(segment.get("source_id") or ""), "source_s": round(clip_start, 3),
+                             "source_e": round(clip_end, 3)})
+    return sorted(remapped, key=lambda x: (x["s"], x["e"]))
+
+
+def _caption_words_for_mode(words: list[dict], plan: dict, options: dict) -> list[dict]:
+    if options.get("caption_mode") in {"off"} or options.get("audio_mode") == "music_only":
+        return []
+    if options.get("caption_mode") != "key_dialogue":
+        return words
+    segments = plan.get("segments") or []
+    key_ids = {str(x.get("source_id")) for x in segments if x.get("music_phase") in {"hook", "climax", "resolution"}}
+    selected = [word for word in words if str(word.get("source_segment")) in key_ids]
+    return selected or words[:max(1, min(10, len(words)))]
+
+
+def _write_captions_srt(path: Path, words: list[dict]):
+    lines, current = [], []
+    for word in words:
+        if current and (float(word["s"]) - float(current[-1]["e"]) > 0.45 or len(current) >= 8 or str(current[-1]["w"]).endswith((".", "?", "!"))):
+            lines.append(current)
+            current = []
+        current.append(word)
+    if current:
+        lines.append(current)
+    def stamp(value):
+        value = max(0.0, float(value))
+        h, m, sec = int(value // 3600), int(value % 3600 // 60), value % 60
+        return f"{h:02d}:{m:02d}:{sec:06.3f}".replace(".", ",")
+    payload = []
+    for index, group in enumerate(lines, 1):
+        text_value = " ".join(str(x["w"]) for x in group)
+        payload.extend([str(index), f"{stamp(group[0]['s'])} --> {stamp(group[-1]['e'])}", text_value, ""])
+    path.write_text("\n".join(payload), encoding="utf-8")
+
+
+def prepare_captions(job: dict, source: Path, plan: dict, options: dict, existing_words: list[dict] | None = None, cancel=None) -> dict:
+    words, source_kind, warnings = _extract_selected_words(source, plan, options, job, existing_words or [], cancel=cancel)
+    remapped = remap_caption_words(words, plan)
+    remapped = _caption_words_for_mode(remapped, plan, options)
+    try:
+        from . import render as caption_render
+        caption_render.install_fonts()
+        ass = caption_render.build_ass(remapped, 0.0, float(plan.get("total_duration") or 0), "", _caption_style(options),
+                                       [x["w"] for x in remapped if len(str(x["w"])) >= 6][:3], 300, _caption_y(options.get("caption_position")),
+                                       show_hook=False, script="ru" if options.get("caption_language") == "ru" else "")
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"Caption ASS generation failed: {str(e)[:160]}")
+        ass = ""
+    _job_file(job, "captions.ass").write_text(ass, encoding="utf-8")
+    _json_write(_job_file(job, "captions-timeline.json"), {"version": "cinematic-captions-1", "mode": options.get("caption_mode"),
+                                                            "style": options.get("caption_style"), "language": options.get("caption_language"),
+                                                            "audio_mode": options.get("audio_mode"), "source": source_kind,
+                                                            "words": remapped, "warnings": warnings})
+    _write_captions_srt(_job_file(job, "captions.srt"), remapped)
+    return {"status": "ready" if remapped or options.get("caption_mode") == "off" else "not_available", "mode": options.get("caption_mode"),
+            "style": options.get("caption_style"), "language": options.get("caption_language"), "source": source_kind,
+            "word_count": len(remapped), "warnings": warnings, "timeline_file": "captions-timeline.json", "ass_file": "captions.ass",
+            "srt_file": "captions.srt"}
+
+
 def _ffmpeg_cancel(cmd: list[str], cancel=None):
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", creationflags=_NO_WINDOW)
     while proc.poll() is None:
@@ -1340,11 +1752,17 @@ def verify_rendered_music(output: Path, music_path: Path, music_start: float, du
             "matched_fraction": round(matched_fraction, 4), "checked_seconds": round(sample_count / 8000, 3)}
 
 
-def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict, output: Path, cancel=None) -> dict:
+def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict, output: Path,
+                captions_ass: Path | None = None, cancel=None) -> dict:
     errors = validate_plan(plan, float(plan.get("source_duration") or 0))
     if errors:
         raise ValueError("Invalid edit plan: " + " ".join(errors))
     segments = plan["segments"]
+    options = normalize_options(options)
+    if options.get("audio_mode") == "original_audio":
+        music_path = None
+    source_has_audio = bool(_probe(source).get("has_audio"))
+    planned_duration = float(plan.get("total_duration") or 0)
     cmd = ["ffmpeg", "-y", "-v", "error"]
     for seg in segments:
         cmd += ["-ss", f"{float(seg['source_in']):.3f}", "-t", f"{float(seg['source_out']) - float(seg['source_in']):.3f}", "-i", str(source)]
@@ -1371,15 +1789,21 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
         crop_meta = seg.get("crop") or {}
         center_x = float(crop_meta.get("center_x") or 0.5)
         center_y = float(crop_meta.get("center_y") or 0.5)
-        if options["dynamic_zoom"]:
+        safe_letterbox = crop_meta.get("mode") == "letterbox_safe"
+        if safe_letterbox:
+            scale = "scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos"
+            crop = "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black"
+        elif options["dynamic_zoom"]:
             crop = f"crop=1080:1920:(in_w-out_w)*{center_x:.4f}+(in_w-out_w)*0.04*sin(t*0.7):(in_h-out_h)*{center_y:.4f}+(in_h-out_h)*0.03*cos(t*0.5)"
         else:
             crop = f"crop=1080:1920:(in_w-out_w)*{center_x:.4f}:(in_h-out_h)*{center_y:.4f}"
         eq = f"eq=contrast={grading[0]:.3f}:saturation={grading[1]:.3f}:brightness={grading[2]:.3f}" if options["color_grading"] else "null"
         filters.append(f"[{i}:v]setpts=PTS/{speed:.5f},fps=30,{scale},{crop},{eq},setsar=1[v{i}]")
         video_labels.append((f"v{i}", float(seg["timeline_out"]) - float(seg["timeline_in"])))
-        if options["keep_original_dialogue"]:
-            filters.append(f"[{i}:a]asetpts=PTS-STARTPTS,atempo={1.0 / speed:.5f}[a{i}]")
+        retain_audio = options.get("audio_mode") in {"dialogue_intro_music", "music_key_dialogue", "original_audio"} or options["keep_original_dialogue"]
+        if retain_audio and source_has_audio:
+            intro_silence = ",volume=0" if options.get("audio_mode") == "dialogue_intro_music" and i > 0 else ""
+            filters.append(f"[{i}:a]asetpts=PTS-STARTPTS,atempo={1.0 / speed:.5f}{intro_silence}[a{i}]")
             audio_labels.append((f"a{i}", float(seg["timeline_out"]) - float(seg["timeline_in"])))
     current = video_labels[0][0]
     accumulated = video_labels[0][1]
@@ -1394,7 +1818,7 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
             out = f"vx{i}"
             filters.append(f"[{current}][{label}]concat=n=2:v=1:a=0[{out}]")
             current, accumulated = out, accumulated + length
-    filters.append(f"[{current}]fade=t=in:st=0:d=0.25,fade=t=out:st={max(0.0, accumulated - 0.25):.3f}:d=0.25[vout]")
+    filters.append(f"[{current}]tpad=stop_mode=clone:stop_duration=1,trim=duration={planned_duration:.3f},setpts=PTS-STARTPTS,fade=t=in:st=0:d=0.25,fade=t=out:st={max(0.0, planned_duration - 0.25):.3f}:d=0.25[vout]")
     audio = None
     if audio_labels:
         audio = audio_labels[0][0]
@@ -1410,7 +1834,7 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
             audio = out
             audio_accumulated = audio_accumulated + length - trans
         if music_path:
-            filters.append(f"[{music_index}:a]asetpts=PTS-STARTPTS,apad=pad_dur={accumulated:.3f},atrim=duration={accumulated:.3f},afade=t=in:st=0:d=0.35,afade=t=out:st={max(0.0, accumulated - 0.5):.3f}:d=0.5[music]")
+            filters.append(f"[{music_index}:a]asetpts=PTS-STARTPTS,apad=pad_dur={planned_duration:.3f},atrim=duration={planned_duration:.3f},afade=t=in:st=0:d=0.35,afade=t=out:st={max(0.0, planned_duration - 0.5):.3f}:d=0.5[music]")
             if options["audio_ducking"]:
                 filters.append(f"[music][{audio}]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=250[duck]")
                 filters.append(f"[duck][{audio}]amix=inputs=2:duration=longest:dropout_transition=0,loudnorm=I=-14:TP=-1.0:print_format=none[aout]")
@@ -1421,7 +1845,7 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
             filters.append(f"[{audio}]loudnorm=I=-14:TP=-1.0:print_format=none[aout]")
             audio = "aout"
     elif music_path:
-        filters.append(f"[{music_index}:a]asetpts=PTS-STARTPTS,apad=pad_dur={accumulated:.3f},atrim=duration={accumulated:.3f},afade=t=in:st=0:d=0.35,afade=t=out:st={max(0.0, accumulated - 0.5):.3f}:d=0.5,loudnorm=I=-14:TP=-1.0:print_format=none[aout]")
+        filters.append(f"[{music_index}:a]asetpts=PTS-STARTPTS,apad=pad_dur={planned_duration:.3f},atrim=duration={planned_duration:.3f},afade=t=in:st=0:d=0.35,afade=t=out:st={max(0.0, planned_duration - 0.5):.3f}:d=0.5,loudnorm=I=-14:TP=-1.0:print_format=none[aout]")
         audio = "aout"
     cmd += ["-filter_complex", ";".join(filters), "-map", "[vout]"]
     if audio:
@@ -1429,13 +1853,23 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
     else:
         cmd += ["-an"]
     output.parent.mkdir(parents=True, exist_ok=True)
-    planned_duration = float(plan.get("total_duration") or accumulated)
+    render_output = output.with_name(output.stem + ".base.mp4") if captions_ass and captions_ass.is_file() and captions_ass.stat().st_size else output
+    planned_duration = planned_duration or accumulated
     cmd += ["-t", f"{planned_duration:.3f}", "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-r", "30", "-pix_fmt", "yuv420p"]
     if audio:
         cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
-    cmd += ["-movflags", "+faststart", str(output)]
+    cmd += ["-movflags", "+faststart", str(render_output)]
     began = time.monotonic()
     _ffmpeg_cancel(cmd, cancel=cancel)
+    if render_output != output:
+        ass_file = str(captions_ass.resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        fonts_dir = str(config.FONTS_DIR.resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        subtitle_filter = f"ass=filename='{ass_file}':fontsdir='{fonts_dir}'"
+        caption_cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(render_output), "-vf", subtitle_filter,
+                       "-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+                       "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(output)]
+        _ffmpeg_cancel(caption_cmd, cancel=cancel)
+        render_output.unlink(missing_ok=True)
     if music_path:
         selected_duration = max(0.0, float(validate_music(music_path)["duration"]) - float(plan.get("music_offset") or 0))
         # A deliberately short explicit track may be followed by silence, but
@@ -1450,6 +1884,8 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
         raise RuntimeError("The selected music could not be confirmed in the rendered audio; the edit was not published as ready.")
     return {"render_seconds": round(time.monotonic() - began, 3), "duration": round(planned_duration, 3), "width": 1080, "height": 1920,
             "fps": 30, "audio": bool(audio), "music_verification": music_verification,
+            "captions": bool(captions_ass and captions_ass.is_file()),
+            "caption_file": str(captions_ass.name) if captions_ass and captions_ass.is_file() else "",
             "cpu_ram_vram": "NOT AVAILABLE: runtime metrics are not recorded"}
 
 
@@ -1490,11 +1926,18 @@ def public_job(job: dict) -> dict:
     selected.pop("path", None)
     out["selected_music"] = selected
     out["effective_options"] = job.get("effective_options") or job.get("options") or {}
+    plan = _json_read(_job_file(job, "edit-plan.json"), {})
+    if isinstance(plan, dict):
+        out["edit_mode"] = plan.get("edit_mode") or out["effective_options"].get("edit_mode")
+        out["edit_concept"] = plan.get("semantic_concept", "")
+        out["target_character"] = plan.get("target_character", "")
+        out["pacing_profile"] = plan.get("pacing_profile", {})
     out["music_status"] = "required" if job.get("status") == "music_required" else "selected" if selected.get("title") else "original_audio" if (job.get("options") or {}).get("music_source") == "original_audio" else "pending"
     out["files"] = {}
     for name, public_name in (("result.mp4", "video"), ("edit-plan.json", "plan"), ("music-analysis.json", "music_analysis"),
                               ("scene-analysis.json", "scenes"), ("event-analysis.json", "events"), ("ai-scene-selection.json", "ai_scene_selection"),
-                              ("license.json", "license"), ("metrics.json", "metrics")):
+                              ("license.json", "license"), ("metrics.json", "metrics"), ("captions-timeline.json", "captions_timeline"),
+                              ("captions.ass", "captions_ass"), ("captions.srt", "captions_srt"), ("quality-gate.json", "quality_gate")):
         if _job_file(job, name).is_file():
             out["files"][public_name] = f"/media/cinematic/{job['id']}/{name}"
     return out
@@ -1563,12 +2006,48 @@ def cancel_job(uid: str, jid: str) -> dict:
     return public_job(job)
 
 
-def rerender(uid: str, jid: str) -> dict:
+def rerender(uid: str, jid: str, changes: dict | None = None) -> dict:
     job = get_job(uid, jid)
     if not job:
         raise FileNotFoundError("Cinematic edit not found.")
     if not _job_file(job, "edit-plan.json").is_file():
         raise ValueError("There is no saved edit plan to render again.")
+    if isinstance(changes, dict):
+        old = normalize_options(job.get("effective_options") or job.get("options") or {})
+        allowed = {key: changes[key] for key in ("caption_mode", "caption_style", "caption_language", "caption_size", "caption_position",
+                                                   "caption_color", "caption_highlight_color", "audio_mode", "keep_original_dialogue",
+                                                   "audio_ducking") if key in changes}
+        if allowed:
+            updated = normalize_options({**old, **allowed})
+            job["effective_options"] = updated
+            timeline_path = _job_file(job, "captions-timeline.json")
+            plan = _json_read(_job_file(job, "edit-plan.json"), {})
+            timeline = _json_read(timeline_path, {})
+            caption_active = updated.get("caption_mode") != "off" and updated.get("audio_mode") != "music_only"
+            rebuild_captions = bool(caption_active and (
+                old.get("caption_language") != updated.get("caption_language") or
+                old.get("caption_mode") == "off" or old.get("audio_mode") == "music_only" or
+                not timeline_path.is_file()))
+            job["rebuild_captions"] = rebuild_captions
+            if not rebuild_captions and timeline_path.is_file() and isinstance(timeline, dict) and isinstance(plan, dict):
+                timeline_words = _caption_words_for_mode(_normalise_words(timeline.get("words")), plan, job["effective_options"])
+                from . import render as caption_render
+                caption_render.install_fonts()
+                ass = caption_render.build_ass(timeline_words, 0.0, float(plan.get("total_duration") or 0), "", _caption_style(job["effective_options"]),
+                                               [x["w"] for x in timeline_words if len(str(x["w"])) >= 6][:3], 300,
+                                               _caption_y(job["effective_options"].get("caption_position")), show_hook=False,
+                                               script="ru" if job["effective_options"].get("caption_language") == "ru" else "")
+                _job_file(job, "captions.ass").write_text(ass, encoding="utf-8")
+                _write_captions_srt(_job_file(job, "captions.srt"), timeline_words)
+                timeline["mode"] = job["effective_options"].get("caption_mode")
+                timeline["style"] = job["effective_options"].get("caption_style")
+                timeline["language"] = job["effective_options"].get("caption_language")
+                timeline["audio_mode"] = job["effective_options"].get("audio_mode")
+                _json_write(timeline_path, timeline)
+                plan.setdefault("captions", {}).update({"mode": timeline["mode"], "style": timeline["style"],
+                                                         "language": timeline["language"], "audio_mode": timeline["audio_mode"],
+                                                         "word_count": len(timeline_words)})
+                _json_write(_job_file(job, "edit-plan.json"), plan)
     job.update(status="queued", stage="Waiting to render saved plan", progress=0.0, error="", cancel_requested=False, repeat=True)
     _save_job(job)
     _queue.put(jid)
@@ -1581,10 +2060,13 @@ def _update(job: dict, **values):
     _save_job(job)
 
 
-def _ai_scene_notes(job: dict, events: list[dict], options: dict, cancel=None) -> dict:
-    primary_model = options.get("ai_model") or "google/gemini-2.5-flash-lite"
+def _ai_scene_notes(job: dict, events: list[dict], options: dict, music_analysis: dict | None = None,
+                    music: dict | None = None, cancel=None) -> dict:
+    primary_model = options.get("discovery_model") or options.get("ai_model") or "google/gemini-2.5-flash-lite"
+    director_model = options.get("director_model") or os.getenv("PEAKCUT_CINEMATIC_FINAL_MODEL") or "google/gemini-2.5-flash"
     if not options.get("ai_scene_selector"):
-        return {"status": "not_requested", "model": "", "calls": 0, "estimated_cost_usd": None,
+        return {"status": "not_requested", "model": "", "discovery_model": primary_model, "director_model": director_model,
+                "calls": 0, "estimated_cost_usd": None,
                 "semantic": False}
     candidates = _event_candidates(events, 8)
     if not candidates:
@@ -1616,17 +2098,31 @@ def _ai_scene_notes(job: dict, events: list[dict], options: dict, cancel=None) -
                 "estimated_cost_usd": None, "semantic": False, "error": "Grouped-event frames were not available for the bounded AI request."}
     focus = options.get("edit_focus") or "auto"
     focus_text = options.get("edit_focus_text") or ""
-    prompt = ("Create one coherent cinematic montage from the bounded event batches below. Do not invent content, "
+    music_context = {"track": (music or {}).get("title", "Original Audio" if not music else "Selected music"),
+                     "bpm": (music_analysis or {}).get("bpm_estimate"),
+                     "rhythmic_confidence": (music_analysis or {}).get("rhythm_confidence", 0),
+                     "beat_timestamps": (music_analysis or {}).get("beat_timestamps", [])[:80],
+                     "strong_accents": (music_analysis or {}).get("strong_accents", [])[:40],
+                     "phrase_timestamps": (music_analysis or {}).get("phrase_timestamps", [])[:40],
+                     "build_up_sections": (music_analysis or {}).get("build_up_sections", [])[:12],
+                     "high_energy_sections": (music_analysis or {}).get("high_energy_sections", [])[:12],
+                     "music_start_offset": options.get("music_start_offset", 0),
+                     "target_duration": options.get("duration", 30)}
+    prompt = ("Create a bounded cinematic edit director plan from the event batches below. Music was selected and analyzed before this request. Do not invent content, "
               "do not use local paths, and do not select an event unless its attached frames support the decision. "
-              "Return an object with concept, recommendations (event_id, score 0-100, phase hook/build_up/climax/resolution, "
-              "reason), and structure. Prefer character/event continuity over motion or sharpness. The attached images are "
-              "in the frame_labels order in each row. Atmosphere=" + options["atmosphere"] + "; Edit Focus=" + focus +
-              (f" ({focus_text})" if focus_text else "") + ". Events:\n" + json.dumps(rows, ensure_ascii=False))
-    schema = {"type": "object", "properties": {"concept": {"type": "string"},
+              "Return an object with concept, target_character (only a neutral visual description unless the frames/dialogue prove a name), emotional_direction, opening_hook, build_up, climax, resolution, "
+              "recommendations (event_id, score 0-100, phase hook/build_up/climax/resolution, reason), scene_order and caption_intent. "
+              "Prefer character/event continuity over motion or sharpness. Character Edit may select related events across the whole source, not only one event arc. "
+              "The attached images are in the frame_labels order in each row. Atmosphere=" + options["atmosphere"] + "; Edit Mode=" + options.get("edit_mode", "cinematic_story") +
+              "; Edit Focus=" + focus + (f" ({focus_text})" if focus_text else "") + ". Music context:\n" + json.dumps(music_context, ensure_ascii=False) +
+              "\nEvents:\n" + json.dumps(rows, ensure_ascii=False))
+    schema = {"type": "object", "properties": {"concept": {"type": "string"}, "target_character": {"type": "string"},
+                                                   "emotional_direction": {"type": "string"}, "opening_hook": {"type": "string"},
+                                                   "build_up": {"type": "string"}, "climax": {"type": "string"}, "resolution": {"type": "string"},
                                                    "recommendations": {"type": "array", "items": {"type": "object", "properties": {
                                                        "event_id": {"type": "string"}, "score": {"type": "number"},
                                                        "phase": {"type": "string"}, "reason": {"type": "string"}}}},
-                                                   "structure": {"type": "array"}}}
+                                                   "scene_order": {"type": "array"}, "caption_intent": {"type": "string"}}}
     try:
         from . import brain
         audit = {}
@@ -1644,9 +2140,12 @@ def _ai_scene_notes(job: dict, events: list[dict], options: dict, cancel=None) -
             return (audit_data.get("input_tokens", 0) * rate[0] + audit_data.get("output_tokens", 0) * rate[1]) if rate else 0.0
         estimated = cost(audit, model)
         concept = str((answer or {}).get("concept") or "").strip()[:300] if isinstance(answer, dict) else ""
-        final_model = str(os.getenv("PEAKCUT_CINEMATIC_FINAL_MODEL") or "").strip()
+        final_model = str(director_model or "").strip()
         final_error = ""
-        if final_model and final_model != model:
+        # The text-only estimate is intentionally conservative; image-token
+        # charges are not returned by the provider and therefore never become
+        # a false billing claim. A user can opt out by using one model.
+        if final_model and final_model != model and estimated <= 0.50:
             if cancel and cancel():
                 raise Cancelled()
             final_audit = {}
@@ -1664,13 +2163,22 @@ def _ai_scene_notes(job: dict, events: list[dict], options: dict, cancel=None) -
                     final_error = "Final semantic model returned no valid event IDs; primary review was retained."
             except Exception as e:  # noqa: BLE001 - primary review remains usable
                 final_error = f"Final semantic model unavailable: {str(e)[:180]}"
-        result = {"status": "available", "model": model, "calls": 2 if final_model and not final_error else 1, "tokens": spent,
+        result = {"status": "available", "model": model, "discovery_model": model, "director_model": final_model,
+                  "calls": 2 if final_model and final_model != model and not final_error else 1, "tokens": spent,
                   "input_tokens": audit.get("input_tokens", 0) + (final_audit.get("input_tokens", 0) if 'final_audit' in locals() else 0),
                   "output_tokens": audit.get("output_tokens", 0) + (final_audit.get("output_tokens", 0) if 'final_audit' in locals() else 0),
                   "estimated_cost_usd": round(estimated, 8),
                   "cost_note": "Estimated text-token cost; provider billing and image-token charges are not returned.",
                   "candidate_event_ids": [x["id"] for x in candidates], "recommendations": (answer or {}).get("recommendations", []),
-                  "structure": (answer or {}).get("structure", []), "concept": concept, "semantic": True}
+                  "structure": (answer or {}).get("structure", []), "scene_order": (answer or {}).get("scene_order", []),
+                  "target_character": str((answer or {}).get("target_character") or "")[:160],
+                  "emotional_direction": str((answer or {}).get("emotional_direction") or "")[:240],
+                  "opening_hook": str((answer or {}).get("opening_hook") or "")[:240],
+                  "build_up": str((answer or {}).get("build_up") or "")[:240],
+                  "climax": str((answer or {}).get("climax") or "")[:240],
+                  "resolution": str((answer or {}).get("resolution") or "")[:240],
+                  "caption_intent": str((answer or {}).get("caption_intent") or "")[:240],
+                  "music_context": music_context, "concept": concept, "semantic": True}
         if final_error:
             result["final_model_note"] = final_error
         return result
@@ -1706,6 +2214,34 @@ def _effective_options(options: dict, music: dict | None) -> dict:
     return out
 
 
+def quality_gate(plan: dict, output: Path, captions_timeline: Path | None = None) -> dict:
+    """Mechanical final checks; it deliberately does not claim artistic acceptance."""
+    checks = {}
+    errors = []
+    try:
+        probe = _probe(output)
+        checks["mp4_bytes"] = output.is_file() and output.stat().st_size > 0
+        checks["vertical_geometry"] = probe.get("width") == 1080 and probe.get("height") == 1920
+        checks["audio_presence"] = bool(probe.get("has_audio"))
+        checks["duration"] = abs(float(probe.get("duration") or 0) - float(plan.get("total_duration") or 0)) <= 2 / 30 + 0.08
+    except Exception as e:  # noqa: BLE001
+        checks.update(mp4_bytes=False, vertical_geometry=False, audio_presence=False, duration=False)
+        errors.append(str(e)[:180])
+    segments = plan.get("segments") or []
+    ids = [str(x.get("source_id")) for x in segments]
+    checks["duplicate_shots"] = len(ids) == len(set(ids))
+    checks["source_boundaries"] = not validate_plan(plan, float(plan.get("source_duration") or 0))
+    checks["transition_overlap"] = all(float((x.get("transition") or {}).get("duration") or 0) <= 0.3 for x in segments)
+    checks["beat_alignment"] = all(x.get("sync_error_frames") is None or abs(float(x["sync_error_frames"])) <= 1.5 for x in segments)
+    checks["caption_artifacts"] = bool(captions_timeline and captions_timeline.is_file())
+    for key, value in checks.items():
+        if not value:
+            errors.append(key)
+    return {"technical_status": "PASS" if not errors else "FAIL", "checks": checks, "errors": errors,
+            "artistic_acceptance": "NOT_RUN", "listening_acceptance": "NOT_RUN", "rights_acceptance": "SEPARATE_LICENSE_GATE",
+            "note": "Mechanical media and plan checks only; a contact sheet or decoded MP4 does not establish artistic, listening, owner or publication acceptance."}
+
+
 def _run_job(job: dict):
     uid = job["user"]
     source = Path(job["source_path"])
@@ -1721,6 +2257,11 @@ def _run_job(job: dict):
         if job.get("repeat") and _job_file(job, "edit-plan.json").is_file():
             _update(job, status="running", stage="Rendering saved edit plan", progress=0.55)
             plan = _json_read(_job_file(job, "edit-plan.json"), {})
+            if job.pop("rebuild_captions", False):
+                _update(job, stage="Preparing captions", progress=0.60)
+                caption_result = prepare_captions(job, source, plan, options, existing_words=[], cancel=cancelled)
+                plan["captions"] = caption_result
+                _json_write(_job_file(job, "edit-plan.json"), plan)
             selected = job.get("selected_music") or {}
             music_path = Path(selected["path"]) if selected.get("path") else None
             if music_path and not music_path.is_file() and selected.get("track_id") not in ("", "upload"):
@@ -1730,15 +2271,12 @@ def _run_job(job: dict):
                 verify_music_decode(music_path, cancel=cancelled)
             elif options["music_source"] != "original_audio":
                 raise MusicRequired("Music is required for Auto, Library or Upload. The saved job has no selected music.")
-            metrics = render_plan(source, music_path, plan, options, _job_file(job, "result.mp4"), cancel=cancelled)
+            metrics = render_plan(source, music_path, plan, options, _job_file(job, "result.mp4"),
+                                  captions_ass=_job_file(job, "captions.ass"), cancel=cancelled)
         else:
-            _update(job, status="running", stage="Detecting scenes", progress=0.1)
-            scenes = analyze_scenes(source, Path(job["dir"]), cancel=cancelled)
-            dialogue = _read_existing_dialogue(job)
-            events = analyze_events(scenes, Path(job["dir"]), dialogue=dialogue, cancel=cancelled)
-            ai_notes = _ai_scene_notes(job, events, options, cancel=cancelled)
-            _json_write(_job_file(job, "ai-scene-selection.json"), ai_notes)
-            _update(job, stage="Selecting music", progress=0.28)
+            # Music-first contract: the selected bytes and analyzed segment
+            # exist before event interpretation or the director prompt.
+            _update(job, status="running", stage="Selecting and analyzing music", progress=0.08)
             selected = job.get("selected_music") or {}
             music = None
             reason = job.get("selection_reason") or ""
@@ -1757,8 +2295,14 @@ def _run_job(job: dict):
                 _json_write(_job_file(job, "music-analysis.json"), {"track_id": music.get("track_id"), **music_analysis})
             else:
                 _json_write(_job_file(job, "music-analysis.json"), {"source": "original_audio", "reason": reason, "analysis": "NOT APPLICABLE"})
-            _update(job, stage="Building edit plan", progress=0.45, warnings=warnings, selection_reason=reason,
+            _update(job, stage="Discovering bounded scenes", progress=0.24, warnings=warnings, selection_reason=reason,
                     selected_music={k: v for k, v in (music or selected or {}).items() if k != "analysis"})
+            scenes = analyze_scenes(source, Path(job["dir"]), cancel=cancelled)
+            dialogue = _read_existing_dialogue(job)
+            events = analyze_events(scenes, Path(job["dir"]), dialogue=dialogue, cancel=cancelled)
+            ai_notes = _ai_scene_notes(job, events, options, music_analysis=music_analysis, music=music, cancel=cancelled)
+            _json_write(_job_file(job, "ai-scene-selection.json"), ai_notes)
+            _update(job, stage="Building music-aligned edit plan", progress=0.48)
             plan = make_plan(source, source_info, scenes, options, music, music_analysis, reason, warnings, ai_notes=ai_notes, events=events)
             if music:
                 selected_with_segment = dict(music)
@@ -1767,13 +2311,19 @@ def _run_job(job: dict):
             plan_errors = validate_plan(plan, source_info["duration"])
             if plan_errors:
                 raise ValueError("Invalid edit plan: " + " ".join(plan_errors))
+            caption_result = prepare_captions(job, source, plan, options, existing_words=dialogue, cancel=cancelled)
+            plan["captions"] = caption_result
             _json_write(_job_file(job, "edit-plan.json"), plan)
             license_meta = (music or {}).get("license") if music else {"status": "not_applicable", "reason": "Original Audio"}
             _json_write(_job_file(job, "license.json"), {"track_id": (music or {}).get("track_id", ""), "license": license_meta,
                                                              "attribution": (license_meta or {}).get("attribution", "")})
-            _update(job, stage="Rendering MP4", progress=0.62)
-            metrics = render_plan(source, Path(music["path"]) if music else None, plan, options, _job_file(job, "result.mp4"), cancel=cancelled)
-        _json_write(_job_file(job, "metrics.json"), {**metrics, "ai_usage": _json_read(_job_file(job, "ai-scene-selection.json"), {"status": "not_requested"})})
+            _update(job, stage="Rendering MP4", progress=0.68)
+            metrics = render_plan(source, Path(music["path"]) if music else None, plan, options, _job_file(job, "result.mp4"),
+                                  captions_ass=_job_file(job, "captions.ass"), cancel=cancelled)
+        gate = quality_gate(plan, _job_file(job, "result.mp4"), _job_file(job, "captions-timeline.json"))
+        _json_write(_job_file(job, "quality-gate.json"), gate)
+        _json_write(_job_file(job, "metrics.json"), {**metrics, "ai_usage": _json_read(_job_file(job, "ai-scene-selection.json"), {"status": "not_requested"}),
+                                                        "quality_gate": gate})
         _update(job, status="done", stage="Ready", progress=1.0, error="", repeat=False, finished_at=_now())
     except MusicRequired as e:
         _update(job, status="music_required", stage="Music required", progress=0.0, error=str(e), repeat=False)

@@ -50,6 +50,7 @@ def main() -> int:
             return 1
         runs = [("permissions", ["tests/test_permissions.py", BASE, str(ROOT), sys.executable]),
                 ("cinematic edit engine: media, music, plan and decode", ["tests/test_cinematic.py"]),
+                ("cinematic Stage 6B: director modes, pacing and caption remap", ["tests/test_cinematic_stage6b.py"]),
                 ("abuse and limits", ["tests/test_abuse.py", BASE, str(ROOT)]),
                 ("queue under load", ["tests/test_load_queue.py", str(ROOT)]),
                 ("a day-long video in little memory", ["tests/test_longvideo.py"]),

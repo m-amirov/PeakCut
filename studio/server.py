@@ -1484,14 +1484,15 @@ def music_media(tid: str):
 
 @app.get("/media/cinematic/{jid}/{name}")
 def cinematic_media(jid: str, name: str):
-    if not re.fullmatch(r"(?:result\.mp4|edit-plan\.json|music-analysis\.json|scene-analysis\.json|ai-scene-selection\.json|license\.json|metrics\.json)", name):
+    if not re.fullmatch(r"(?:result\.mp4|edit-plan\.json|music-analysis\.json|scene-analysis\.json|event-analysis\.json|ai-scene-selection\.json|license\.json|metrics\.json|captions-timeline\.json|captions\.ass|captions\.srt|quality-gate\.json)", name):
         raise HTTPException(404)
     job = _cinematic_or_404(jid)
     path = Path(job["dir"]) / name
     if not path.is_file():
         raise HTTPException(404)
+    media_type = "video/mp4" if name == "result.mp4" else "application/json" if name.endswith(".json") else "text/plain; charset=utf-8"
     return FileResponse(path, filename=name if name == "result.mp4" else None,
-                        media_type="video/mp4" if name == "result.mp4" else "application/json",
+                        media_type=media_type,
                         headers={"Cache-Control": "private, max-age=300"})
 
 
@@ -1654,9 +1655,9 @@ def cinematic_cancel(jid: str):
 
 
 @app.post("/api/cinematic/jobs/{jid}/render")
-def cinematic_render_again(jid: str):
+def cinematic_render_again(jid: str, body: dict = Body(default={})):
     try:
-        return cinematic.rerender(ctx.uid(), jid)
+        return cinematic.rerender(ctx.uid(), jid, body if isinstance(body, dict) else {})
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:

@@ -3512,6 +3512,7 @@ function drawCinematic() {
       <div class="fields">
         <label class="wide">Source video<input id="ce_video" type="file" accept="video/mp4,video/quicktime,video/x-matroska,.mp4,.mov,.mkv"></label>
         <label>Music source<select id="ce_music_source"><option value="auto">Auto — confirmed local library only</option><option value="library">Library — choose a track</option><option value="upload">Upload — use this file for this edit</option><option value="original_audio">Original Audio — no music</option></select></label>
+        <label>Edit mode<select id="ce_edit_mode"><option value="cinematic_story">Cinematic Story</option><option value="character_edit">Character Edit</option><option value="action_edit">Action Edit</option><option value="emotional_edit">Emotional Edit</option><option value="phonk_aura">Phonk / Aura Edit</option></select></label>
         <label>Atmosphere<select id="ce_atmosphere"><option value="dramatic">Dramatic</option><option value="dark_cinematic">Dark Cinematic</option><option value="emotional">Emotional</option><option value="epic">Epic</option><option value="natural_film">Natural Film</option><option value="phonk">Phonk</option></select></label>
         <label>Music genre<select id="ce_genre"><option value="">Auto by atmosphere</option><option>cinematic</option><option>epic</option><option>dramatic</option><option>dark</option><option>emotional</option><option>ambient</option><option>action</option><option>phonk</option></select></label>
         <label id="ce_track_wrap">Music track<select id="ce_track">${trackOptions || `<option value="">Library is empty</option>`}</select></label>
@@ -3521,17 +3522,27 @@ function drawCinematic() {
         <label>Edit Focus<select id="ce_focus"><option value="auto">Auto</option><option value="character">Character name or description</option><option value="event">Specific event</option><option value="emotional">Emotional moment</option><option value="action">Action sequence</option></select></label>
         <label id="ce_focus_text_wrap" hidden>Focus description<input id="ce_focus_text" type="text" maxlength="240" placeholder="e.g. Guy chooses to become a hero"></label>
         <label>Music start offset<input id="ce_offset" type="number" min="0" step="0.1" value="0"> seconds</label>
-        <label>Semantic AI model<select id="ce_ai_model"><option value="google/gemini-2.5-flash-lite" selected>Gemini Flash Lite (bounded primary)</option><option value="google/gemini-2.5-flash">Gemini Flash</option></select></label>
+        <label>Discovery model<select id="ce_discovery_model"><option value="google/gemini-2.5-flash-lite" selected>Gemini Flash Lite</option><option value="google/gemini-2.5-flash">Gemini Flash</option></select></label>
+        <label>Director model<select id="ce_director_model"><option value="google/gemini-2.5-flash" selected>Gemini Flash</option><option value="google/gemini-2.5-flash-lite">Gemini Flash Lite</option></select></label>
+        <label>Audio mode<select id="ce_audio_mode"><option value="music_only">Music Only</option><option value="dialogue_intro_music">Dialogue Intro + Music</option><option value="music_key_dialogue">Music + Key Dialogue</option><option value="original_audio">Original Audio</option></select></label>
+        <label>Captions<select id="ce_caption_mode"><option value="off">Off</option><option value="dialogue_only">Dialogue only</option><option value="key_dialogue">Key dialogue</option><option value="all_dialogue">All retained dialogue</option></select></label>
+        <label>Caption style<select id="ce_caption_style"><option value="cinematic">Cinematic</option><option value="aura_phonk">Aura / Phonk</option><option value="dynamic">Dynamic</option><option value="movie_original">Movie Original</option></select></label>
+        <label>Caption language<select id="ce_caption_language"><option value="en">English</option><option value="ru">Russian</option><option value="ar">Arabic</option></select></label>
+        <label>Caption size<input id="ce_caption_size" type="number" min="60" max="140" step="1" value="96"></label>
+        <label>Caption position<select id="ce_caption_position"><option value="bottom">Bottom safe zone</option><option value="middle">Middle</option><option value="top">Top safe zone</option></select></label>
+        <label>Caption colour<input id="ce_caption_color" type="text" value="FFF8EE" pattern="[0-9A-Fa-f]{6}" maxlength="6"></label>
+        <label>Highlight colour<input id="ce_caption_highlight" type="text" value="FFD27A" pattern="[0-9A-Fa-f]{6}" maxlength="6"></label>
       </div>
       <div class="cin-checks">
         <label><input id="ce_beat" type="checkbox" checked> Beat Sync</label><label><input id="ce_zoom" type="checkbox" checked> Dynamic Zoom</label>
         <label><input id="ce_grade" type="checkbox" checked> Cinematic Color Grading</label><label><input id="ce_reframe" type="checkbox" checked> Smart Reframe (saliency)</label>
-        <label><input id="ce_trans" type="checkbox" checked> Smooth Transitions</label><label><input id="ce_speed" type="checkbox"> Gentle Speed Variation</label>
+        <label><input id="ce_trans" type="checkbox" checked> Selective Transitions</label><label><input id="ce_hard_cut" type="checkbox"> Hard Cut Priority</label><label><input id="ce_speed" type="checkbox"> Gentle Speed Variation</label>
         <label><input id="ce_dialogue" type="checkbox"> Keep Original Dialogue</label><label><input id="ce_duck" type="checkbox" checked> Audio Ducking</label>
         <label><input id="ce_ai" type="checkbox"> AI Scene Review (bounded)</label>
       </div>
+      <div id="ce_caption_preview" class="cin-note" style="position:relative;margin-top:14px;min-height:180px;padding:18px 14px;background:#1B1512;color:#FFF8EE;border:2px solid #FFD27A;border-radius:10px;text-align:center;font-size:18px;display:grid;place-items:center;overflow:hidden"><video id="ce_caption_preview_video" muted playsinline controls hidden style="width:100%;max-height:360px;object-fit:contain"></video><span id="ce_caption_preview_text">Caption preview · The selected dialogue will appear here.</span></div>
       <p id="ce_music_status" class="cin-note" style="margin-top:14px">Music selection is checked before rendering. Auto never falls back to Original Audio.</p>
-      <p class="cin-note">Smart Reframe uses light local face detection when a face is visible, otherwise saliency/center fallback; it is not full-body tracking. Gentle Speed Variation changes speed per shot, not as an intra-shot optical-flow ramp. AI Scene Review groups neighboring shots, sends bounded event batches with multiple frames and existing dialogue when available, and labels local fallback explicitly.</p>
+      <p class="cin-note">Music is analyzed before the Director plan. Character, Action and Phonk / Aura use hard cuts by default; crossfades are reserved for calm story or emotional punctuation. Smart Reframe uses smoothed local face anchors when visible and a safe letterbox fallback when a crop is not proven. AI requests remain bounded to representative frames and selected dialogue.</p>
       <div class="cin-actions"><button type="button" class="btn primary" data-ce="create">Create Cinematic Edit</button><button type="button" class="btn" data-ce="refresh">Refresh</button></div>
     </section>
     <section class="card cin-lib"><h2>Music Library</h2><p class="cin-note">Local only · <a href="https://studio.youtube.com/" target="_blank" rel="noopener">YouTube Audio Library</a> · <a href="https://pixabay.com/music/" target="_blank" rel="noopener">Pixabay Music</a>. A catalogue listing is not proof of commercial rights.</p>
@@ -3550,13 +3561,15 @@ function drawCinematic() {
   $("#ce_upload_wrap").hidden = source !== "upload";
   $("#ce_save_wrap").hidden = source !== "upload";
   $("#ce_focus_text_wrap").hidden = $("#ce_focus").value === "auto";
+  cePreviewCaption();
 }
 function ceJobHtml(j) {
   const done = j.status === "done", running = ["queued", "running"].includes(j.status), pct = Math.round((j.progress || 0) * 100);
   const files = j.files || {};
   const selected = j.selected_music || {}, segment = selected.segment || {};
   const musicLine = j.status === "music_required" ? `<p class="bad">Music required: choose a confirmed Library track or Upload music. Original Audio is available only when explicitly selected.</p>` : selected.title ? `<p class="cin-note">Music: <b>${esc(selected.title)}</b>${segment.start !== undefined ? ` · used ${fmt(segment.start)}–${fmt(segment.end)} s` : ""}</p>` : "";
-  return `<article class="cin-job"><div>${done && files.video ? `<video controls preload="metadata" src="${esc(files.video)}"></video>` : `<div class="empty" style="min-height:220px;display:grid;place-items:center">${esc(j.stage || j.status)}</div>`}</div><div><h3>${esc(j.source?.name || "Cinematic edit")}</h3><p class="cin-note">${esc(j.stage || j.status)} · ${pct}%${j.selection_reason ? `<br>${esc(j.selection_reason)}` : ""}</p>${musicLine}${running ? `<div class="bar"><i style="width:${pct}%"></i></div><button type="button" class="btn sm danger" data-ce="cancel" data-id="${esc(j.id)}">Cancel</button>` : ""}${j.status === "error" ? `<p class="bad">${esc(j.error || "The edit stopped.")}</p>` : ""}${j.warnings?.length ? `<p class="cin-note">${j.warnings.map(esc).join("<br>")}</p>` : ""}<div class="cin-actions">${done && files.video ? `<a class="btn sm primary" href="${esc(files.video)}?download=1">Download MP4</a><a class="btn sm" href="${esc(files.plan)}" target="_blank" rel="noopener">edit-plan.json</a><a class="btn sm" href="${esc(files.music_analysis)}" target="_blank" rel="noopener">music-analysis.json</a><a class="btn sm" href="${esc(files.scenes)}" target="_blank" rel="noopener">Scene analysis</a>${files.events ? `<a class="btn sm" href="${esc(files.events)}" target="_blank" rel="noopener">Event analysis</a>` : ""}${files.ai_scene_selection ? `<a class="btn sm" href="${esc(files.ai_scene_selection)}" target="_blank" rel="noopener">AI scene review</a>` : ""}${files.license ? `<a class="btn sm" href="${esc(files.license)}" target="_blank" rel="noopener">License</a>` : ""}${files.metrics ? `<a class="btn sm" href="${esc(files.metrics)}" target="_blank" rel="noopener">Metrics</a>` : ""}<button type="button" class="btn sm" data-ce="rerender" data-id="${esc(j.id)}">Render again</button>` : ""}</div></div></article>`;
+  const concept = j.edit_concept || j.target_character ? `<p class="cin-note"><b>${esc(j.edit_mode || "cinematic")}</b>${j.target_character ? ` · focus: ${esc(j.target_character)}` : ""}${j.edit_concept ? `<br>${esc(j.edit_concept)}` : ""}</p>` : "";
+  return `<article class="cin-job"><div>${done && files.video ? `<video controls preload="metadata" src="${esc(files.video)}"></video>` : `<div class="empty" style="min-height:220px;display:grid;place-items:center">${esc(j.stage || j.status)}</div>`}</div><div><h3>${esc(j.source?.name || "Cinematic edit")}</h3><p class="cin-note">${esc(j.stage || j.status)} · ${pct}%${j.selection_reason ? `<br>${esc(j.selection_reason)}` : ""}</p>${concept}${musicLine}${running ? `<div class="bar"><i style="width:${pct}%"></i></div><button type="button" class="btn sm danger" data-ce="cancel" data-id="${esc(j.id)}">Cancel</button>` : ""}${j.status === "error" ? `<p class="bad">${esc(j.error || "The edit stopped.")}</p>` : ""}${j.warnings?.length ? `<p class="cin-note">${j.warnings.map(esc).join("<br>")}</p>` : ""}<div class="cin-actions">${done && files.video ? `<a class="btn sm primary" href="${esc(files.video)}?download=1">Download MP4</a><a class="btn sm" href="${esc(files.plan)}" target="_blank" rel="noopener">edit-plan.json</a><a class="btn sm" href="${esc(files.music_analysis)}" target="_blank" rel="noopener">music-analysis.json</a><a class="btn sm" href="${esc(files.scenes)}" target="_blank" rel="noopener">Scene analysis</a>${files.events ? `<a class="btn sm" href="${esc(files.events)}" target="_blank" rel="noopener">Event analysis</a>` : ""}${files.ai_scene_selection ? `<a class="btn sm" href="${esc(files.ai_scene_selection)}" target="_blank" rel="noopener">AI scene review</a>` : ""}${files.captions_ass ? `<a class="btn sm" href="${esc(files.captions_ass)}" target="_blank" rel="noopener">ASS</a>` : ""}${files.captions_srt ? `<a class="btn sm" href="${esc(files.captions_srt)}" target="_blank" rel="noopener">SRT</a>` : ""}${files.captions_timeline ? `<a class="btn sm" href="${esc(files.captions_timeline)}" target="_blank" rel="noopener">Caption timeline</a>` : ""}${files.quality_gate ? `<a class="btn sm" href="${esc(files.quality_gate)}" target="_blank" rel="noopener">Quality gate</a>` : ""}${files.license ? `<a class="btn sm" href="${esc(files.license)}" target="_blank" rel="noopener">License</a>` : ""}${files.metrics ? `<a class="btn sm" href="${esc(files.metrics)}" target="_blank" rel="noopener">Metrics</a>` : ""}<button type="button" class="btn sm" data-ce="rerender" data-id="${esc(j.id)}">Render again</button>` : ""}</div></div></article>`;
 }
 async function loadCinematic() {
   const v = id => $(id)?.value || "";
@@ -3570,9 +3583,28 @@ function ceFormOptions() {
   return {music_source: val("#ce_music_source"), music_track_id: val("#ce_track"), music_upload_id: S.ce.musicUpload?.id || "", music_genre: val("#ce_genre"), atmosphere: val("#ce_atmosphere"),
     duration: Number(val("#ce_duration")), effects_intensity: val("#ce_intensity"), music_start_offset: Number(val("#ce_offset") || 0),
     beat_sync: $("#ce_beat")?.checked, dynamic_zoom: $("#ce_zoom")?.checked, color_grading: $("#ce_grade")?.checked,
-    smart_reframe: $("#ce_reframe")?.checked, smooth_transitions: $("#ce_trans")?.checked, speed_ramp: $("#ce_speed")?.checked,
+    smart_reframe: $("#ce_reframe")?.checked, smooth_transitions: $("#ce_trans")?.checked, transition_style: $("#ce_hard_cut")?.checked ? "hard_cut" : "auto", speed_ramp: $("#ce_speed")?.checked,
     keep_original_dialogue: $("#ce_dialogue")?.checked, audio_ducking: $("#ce_duck")?.checked, ai_scene_selector: $("#ce_ai")?.checked,
-    edit_focus: val("#ce_focus"), edit_focus_text: val("#ce_focus_text"), ai_model: val("#ce_ai_model")};
+    edit_focus: val("#ce_focus"), edit_focus_text: val("#ce_focus_text"), edit_mode: val("#ce_edit_mode"),
+    discovery_model: val("#ce_discovery_model"), director_model: val("#ce_director_model"), ai_model: val("#ce_discovery_model"),
+    audio_mode: val("#ce_audio_mode"), caption_mode: val("#ce_caption_mode"), caption_style: val("#ce_caption_style"),
+    caption_language: val("#ce_caption_language"), caption_size: Number(val("#ce_caption_size") || 96), caption_position: val("#ce_caption_position"),
+    caption_color: (val("#ce_caption_color") || "FFF8EE").replace(/^#/, ""), caption_highlight_color: (val("#ce_caption_highlight") || "FFD27A").replace(/^#/, "")};
+}
+function cePreviewCaption() {
+  const p = $("#ce_caption_preview"); if (!p) return;
+  const mode = $("#ce_caption_mode")?.value || "off", style = $("#ce_caption_style")?.value || "cinematic";
+  const text = $("#ce_caption_preview_text"); if (!text) return;
+  text.textContent = mode === "off" ? "Captions off · no dialogue will be burned into the MP4." : `${style.replace("_", " / ")} · «Selected dialogue appears on the retained shots.»`;
+  p.style.color = `#${($("#ce_caption_color")?.value || "FFF8EE").replace(/^#/, "")}`;
+  p.style.borderColor = `#${($("#ce_caption_highlight")?.value || "FFD27A").replace(/^#/, "")}`;
+  p.style.fontSize = `${Math.max(14, Math.min(28, Number($("#ce_caption_size")?.value || 96) / 5))}px`;
+}
+function cePreviewVideo(file) {
+  const video = $("#ce_caption_preview_video"); if (!video) return;
+  const previous = video.dataset.objectUrl; if (previous) URL.revokeObjectURL(previous);
+  if (!file) { video.hidden = true; video.removeAttribute("src"); delete video.dataset.objectUrl; return; }
+  const objectUrl = URL.createObjectURL(file); video.dataset.objectUrl = objectUrl; video.src = objectUrl; video.hidden = false;
 }
 async function cePreviewMusic() {
   const note = $("#ce_music_status"); if (!note) return;
@@ -6350,6 +6382,7 @@ function loop() {
 
 /* ============================================================ actions */
 document.addEventListener("change", e => {
+  if (e.target.id === "ce_video") return cePreviewVideo(e.target.files?.[0]);
   if (e.target.id === "ce_music_source") {
     $("#ce_track_wrap").hidden = e.target.value !== "library";
     $("#ce_upload_wrap").hidden = e.target.value !== "upload";
@@ -6360,6 +6393,10 @@ document.addEventListener("change", e => {
     $("#ce_focus_text_wrap").hidden = e.target.value === "auto";
     return;
   }
+  if (e.target.id === "ce_edit_mode" && ["character_edit", "action_edit", "phonk_aura"].includes(e.target.value)) {
+    $("#ce_hard_cut").checked = true;
+  }
+  if (["ce_caption_mode", "ce_caption_style", "ce_caption_language", "ce_caption_size", "ce_caption_position", "ce_caption_color", "ce_caption_highlight"].includes(e.target.id)) return cePreviewCaption();
   if (["ce_track", "ce_atmosphere", "ce_genre", "ce_duration", "ce_offset"].includes(e.target.id)) return cePreviewMusic();
 });
 document.addEventListener("click", async e => {
@@ -6371,7 +6408,7 @@ document.addEventListener("click", async e => {
     if (a === "refresh") return loadCinematic();
     if (a === "search") return loadCinematic();
     if (a === "cancel") { await send(`/api/cinematic/jobs/${encodeURIComponent(id)}/cancel`, {}); toast("Cancellation requested.", "ok"); return refreshCinematicJobs(); }
-    if (a === "rerender") { await send(`/api/cinematic/jobs/${encodeURIComponent(id)}/render`, {}); toast("Rendering the saved plan again.", "ok"); return refreshCinematicJobs(); }
+    if (a === "rerender") { await send(`/api/cinematic/jobs/${encodeURIComponent(id)}/render`, ceFormOptions()); toast("Rendering the saved plan again with the current caption/audio settings.", "ok"); return refreshCinematicJobs(); }
     const track = S.ce.tracks.find(x => x.id === id);
     if (a === "fav" && track) { await send(`/api/music/${encodeURIComponent(id)}`, {favorite: !track.favorite}, "PUT"); return loadCinematic(); }
     if (a === "reanalyze") { await send(`/api/music/${encodeURIComponent(id)}/analyze`, {}); toast("Track analysis refreshed.", "ok"); return loadCinematic(); }

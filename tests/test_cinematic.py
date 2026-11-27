@@ -121,16 +121,58 @@ bad_ai = {"status": "available", "recommendations": [{"source_id": "not-a-scene"
 bad_plan = cinematic.make_plan(source, cinematic.validate_video(source), scenes, off_opts, selected, known_beats, reason, [], ai_notes=bad_ai)
 check("invalid AI recommendations fall back locally", not bad_plan["ai_recommendations_applied"] and any("invalid" in w for w in bad_plan["warnings"]))
 
+# Stage 6A.2 regression: semantic planning keeps one chronological event arc,
+# applies different AI anchors to the final plan, and never leaves approved
+# shot boundaries.  These bounded fixtures exercise the planner without an
+# additional full-film AI call.
+semantic_scenes = []
+semantic_events = []
+for index in range(5):
+    start = index * 5.0
+    sid = f"semantic-shot-{index + 1:02d}"
+    semantic_scenes.append({"id": sid, "start": start, "end": start + 5.0, "duration": 5.0, "excluded": False,
+                            "motion_intensity": 0.2, "sharpness": 0.5, "brightness": 0.5,
+                            "reframe_center_x": 0.5, "reframe_center_y": 0.5, "focus_mode": "saliency_or_center"})
+    semantic_events.append({"id": f"semantic-event-{index + 1:02d}", "start": start, "end": start + 5.0,
+                            "duration": 5.0, "shot_ids": [sid], "dialogue": "", "focus_mode": "saliency_or_center",
+                            "reframe_center_x": 0.5, "reframe_center_y": 0.5, "local_discovery_score": 0.5})
+semantic_info = {"duration": 25.0, **cinematic.validate_video(source)}
+semantic_a = cinematic.make_plan(source, semantic_info, semantic_scenes, off_opts, selected, known_beats,
+                                 reason, [], ai_notes={"status": "available", "concept": "opening arc", "recommendations": [
+                                     {"event_id": "semantic-event-01", "score": 100, "phase": "hook"}]}, events=semantic_events)
+semantic_b = cinematic.make_plan(source, semantic_info, semantic_scenes, off_opts, selected, known_beats,
+                                 reason, [], ai_notes={"status": "available", "concept": "ending arc", "recommendations": [
+                                     {"event_id": "semantic-event-05", "score": 100, "phase": "climax"}]}, events=semantic_events)
+check("semantic AI anchors change the final event arc", semantic_a["ai_recommendations_applied"] and
+      semantic_a["selected_event_ids"] != semantic_b["selected_event_ids"])
+check("semantic plan keeps every source segment inside approved shot bounds",
+      not cinematic.validate_plan(semantic_a, 25.0) and all(
+          float(seg["source_in"]) >= float(seg["approved_source_start"]) - 0.02 and
+          float(seg["source_out"]) <= float(seg["approved_source_end"]) + 0.02 for seg in semantic_a["segments"]))
+bad_semantic = json.loads(json.dumps(semantic_a))
+bad_semantic["segments"][0]["source_out"] = bad_semantic["segments"][0]["approved_source_end"] + 0.5
+check("approved source boundary violations are rejected", any("approved shot/event boundary" in e for e in cinematic.validate_plan(bad_semantic, 25.0)))
+semantic_beats = cinematic.make_plan(source, semantic_info, semantic_scenes, beat_opts, selected, known_beats,
+                                     reason, [], events=semantic_events)
+semantic_sync = [s for s in semantic_beats["segments"] if s["music_beat_reference"] is not None]
+check("semantic beat markers become exact timeline boundaries", semantic_sync and
+      [round(s["timeline_in"], 3) for s in semantic_sync] == [5.0, 10.0] and
+      all(abs(float(s["sync_error_frames"])) <= 1 for s in semantic_sync))
+
 out = work / "result.mp4"
 metrics = cinematic.render_plan(source, Path(selected["path"]), plan, opts, out)
 check("real vertical MP4 is rendered", out.is_file() and out.stat().st_size > 10000 and metrics["width"] == 1080 and metrics["height"] == 1920)
+check("Music Only confirms the selected track in the rendered MP4", metrics["music_verification"]["status"] == "present" and
+      metrics["music_verification"]["selected_sha256"] == cinematic._sha256(Path(selected["path"])))
 probe = json.loads(cinematic.media.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(out)]))
 video = next(s for s in probe["streams"] if s["codec_type"] == "video")
 check("FFprobe confirms H264/AAC-compatible output geometry", video["width"] == 1080 and video["height"] == 1920 and video["codec_name"] == "h264")
 subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-f", "null", "-"], check=True)
 check("full output decode succeeds", True)
 result_duration = float(next(s for s in probe["streams"] if s["codec_type"] == "video").get("duration") or probe["format"].get("duration") or 0)
-check("rendered duration stays within two frames", abs(result_duration - 15.0) <= 2 / 30 + 0.04)
+check("rendered duration matches the validated plan", abs(result_duration - float(plan["total_duration"])) <= 2 / 30 + 0.04)
+if float(plan["total_duration"]) < 15.0:
+    check("insufficient approved source material is reported", any("shorter" in w.lower() or "enough" in w.lower() for w in plan["warnings"]))
 beat_out = work / "beat-sync.mp4"
 cinematic.render_plan(source, Path(selected["path"]), beat_plan, beat_opts, beat_out)
 raw_frames = subprocess.check_output(["ffmpeg", "-v", "error", "-ss", "4", "-t", "2.1", "-i", str(beat_out),
@@ -152,9 +194,13 @@ cinematic.render_plan(source, Path(selected["path"]), mix_plan, mix_opts, repeat
 check("saved plan can be rendered again without re-analysis", repeat_out.is_file() and repeat_out.stat().st_size > 10000)
 
 short_music = work / "short-track.wav"
-sf.write(short_music, np.zeros(sr, dtype=np.float32), sr, subtype="PCM_16")
+short_t = np.arange(sr, dtype=np.float32) / sr
+sf.write(short_music, 0.12 * np.sin(2 * np.pi * 330 * short_t), sr, subtype="PCM_16")
 short_out = work / "short-track-padded.mp4"
-cinematic.render_plan(source, short_music, off_plan, off_opts, short_out)
+short_opts = cinematic.normalize_options({"duration": 15, "music_source": "library", "music_track_id": track["id"],
+                                          "music_start_offset": 0, "beat_sync": False, "effects_intensity": "light"})
+short_plan = cinematic.make_plan(source, cinematic.validate_video(source), scenes, short_opts, selected, known_beats, reason, [])
+cinematic.render_plan(source, short_music, short_plan, short_opts, short_out)
 short_probe = json.loads(cinematic.media.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(short_out)]))
 short_duration = float(short_probe["format"].get("duration") or 0)
 short_audio = next((s for s in short_probe["streams"] if s["codec_type"] == "audio"), {})
@@ -180,10 +226,20 @@ fallback_opts = cinematic.normalize_options({"duration": 15, "atmosphere": "dram
 fallback_job = cinematic.create_job("u_local", fallback_source, fallback_source.name, fallback_opts)
 cinematic._run_job(cinematic.get_job("u_local", fallback_job["id"]))
 fallback_record = cinematic.get_job("u_local", fallback_job["id"])
-fallback_result = Path(fallback_record["dir"]) / "result.mp4"
-fallback_probe = json.loads(cinematic.media.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", str(fallback_result)]))
 cinematic._save_library(saved_library)
-check("Auto fallback really preserves original audio", fallback_record["status"] == "done" and any(s["codec_type"] == "audio" for s in fallback_probe["streams"]))
+check("Auto without an eligible track stops at Music required", fallback_record["status"] == "music_required" and
+      not (Path(fallback_record["dir"]) / "result.mp4").exists() and not fallback_record.get("selected_music"))
+
+explicit_opts = cinematic.normalize_options({"duration": 15, "atmosphere": "dramatic", "music_source": "original_audio"})
+explicit_source = work / "explicit-source.mp4"
+explicit_source.write_bytes(source.read_bytes())
+explicit_job = cinematic.create_job("u_local", explicit_source, explicit_source.name, explicit_opts)
+cinematic._run_job(cinematic.get_job("u_local", explicit_job["id"]))
+explicit_record = cinematic.get_job("u_local", explicit_job["id"])
+explicit_result = Path(explicit_record["dir"]) / "result.mp4"
+explicit_probe = json.loads(cinematic.media.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", str(explicit_result)]))
+check("Original Audio renders only after explicit selection", explicit_record["status"] == "done" and
+      any(s["codec_type"] == "audio" for s in explicit_probe["streams"]))
 
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

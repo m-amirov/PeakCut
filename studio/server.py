@@ -1571,6 +1571,23 @@ def music_upload(file: UploadFile = File(...)):
         path.unlink(missing_ok=True)
 
 
+@app.post("/api/cinematic/music-preview")
+def cinematic_music_preview(body: dict = Body(...)):
+    try:
+        options = cinematic.normalize_options(body if isinstance(body, dict) else {})
+        music, reason, warnings = cinematic.choose_music(options, options["duration"], record_usage=False)
+        if not music:
+            return {"status": "music_required" if options["music_source"] == "auto" else "original_audio",
+                    "title": "", "reason": reason, "warnings": warnings}
+        decoded = cinematic.verify_music_decode(Path(music["path"]))
+        return {"status": "selected", "title": music.get("title") or Path(music["path"]).stem,
+                "track_id": music.get("track_id", ""), "duration": decoded.get("duration", 0),
+                "segment": {"start": options["music_start_offset"], "end": options["music_start_offset"] + options["duration"]},
+                "reason": reason, "warnings": warnings}
+    except (FileNotFoundError, ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+
+
 @app.put("/api/music/{tid}")
 def music_edit(tid: str, body: dict = Body(...)):
     try:

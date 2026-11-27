@@ -27,6 +27,7 @@ from . import config, ctx, media
 
 ANALYZER_VERSION = "cinematic-audio-1"
 PLANNER_VERSION = "cinematic-planner-2"
+SEMANTIC_VERSION = "cinematic-semantic-1"
 MUSIC_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 VIDEO_EXTS = {".mp4", ".mkv", ".mov"}
 ATMOSPHERE_TAGS = {
@@ -57,9 +58,13 @@ DEFAULT_OPTIONS = {
     "audio_ducking": True,
     "target_platform": "local",
     "ai_scene_selector": False,
+    "edit_focus": "auto",
+    "edit_focus_text": "",
+    "ai_model": "google/gemini-2.5-flash-lite",
 }
 ALLOWED_ATMOSPHERES = set(ATMOSPHERE_TAGS)
 ALLOWED_INTENSITY = set(INTENSITY)
+EDIT_FOCUS = {"auto", "character", "event", "emotional", "action"}
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]+")
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -78,6 +83,12 @@ _started = False
 
 
 class Cancelled(RuntimeError):
+    pass
+
+
+class MusicRequired(RuntimeError):
+    """The requested Auto edit cannot start without a confirmed music track."""
+
     pass
 
 
@@ -162,6 +173,14 @@ def normalize_options(options: dict | None) -> dict:
     for k in ("beat_sync", "dynamic_zoom", "color_grading", "smart_reframe", "smooth_transitions", "speed_ramp",
               "keep_original_dialogue", "audio_ducking", "ai_scene_selector"):
         out[k] = bool(out[k])
+    out["edit_focus"] = str(out.get("edit_focus") or "auto").lower()
+    if out["edit_focus"] not in EDIT_FOCUS:
+        raise ValueError("Choose a supported Edit Focus.")
+    out["edit_focus_text"] = str(out.get("edit_focus_text") or "").strip()[:240]
+    model = str(out.get("ai_model") or DEFAULT_OPTIONS["ai_model"])
+    if not re.fullmatch(r"[A-Za-z0-9._/-]{3,140}", model):
+        raise ValueError("The cinematic AI model name is not valid.")
+    out["ai_model"] = model
     out["music_track_id"] = str(out.get("music_track_id") or "")[:80]
     out["music_upload_id"] = str(out.get("music_upload_id") or "")[:80]
     out["music_genre"] = _SAFE.sub("", str(out.get("music_genre") or "").lower())[:40]
@@ -240,6 +259,13 @@ def validate_music(path: Path) -> dict:
     if not info["has_audio"]:
         raise ValueError("This file has no audio stream.")
     return info
+
+
+def verify_music_decode(path: Path, cancel=None) -> dict:
+    """Decode the selected track before rendering and return its probe metadata."""
+    info = validate_music(path)
+    _ffmpeg_cancel(["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-f", "null", "-"], cancel=cancel)
+    return {**info, "sha256": _sha256(path)}
 
 
 def validate_video(path: Path) -> dict:
@@ -388,6 +414,24 @@ def _saliency_center(path: Path) -> tuple[float, float, str]:
         return 0.5, 0.5, "center_fallback"
 
 
+def _focus_center(path: Path) -> tuple[float, float, str, bool]:
+    """Use a light OpenCV face detector when available, then saliency/center fallback."""
+    saliency_x, saliency_y, saliency_mode = _saliency_center(path)
+    try:
+        import cv2
+        image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        if image is not None:
+            cascade = cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"))
+            faces = cascade.detectMultiScale(image, scaleFactor=1.1, minNeighbors=4, minSize=(18, 18))
+            if len(faces):
+                face = max(faces, key=lambda x: int(x[2]) * int(x[3]))
+                x, y, w, h = [int(v) for v in face]
+                return round((x + w / 2) / max(1, image.shape[1]), 4), round((y + h / 2) / max(1, image.shape[0]), 4), "face_haar", True
+    except Exception:  # noqa: BLE001 - optional local detector, never a hard dependency
+        pass
+    return saliency_x, saliency_y, saliency_mode, False
+
+
 def _frame_features(path: Path, out_dir: Path, cancel=None) -> list[dict]:
     info = validate_video(path)
     duration = info["duration"]
@@ -444,13 +488,14 @@ def _frame_features(path: Path, out_dir: Path, cancel=None) -> list[dict]:
                            "-vf", "scale=320:-2", "-q:v", "5", str(frame_dir / frame_name)], timeout=30)
             except Exception:
                 frame_name = ""
-        reframe_x, reframe_y, reframe_mode = _saliency_center(frame_dir / frame_name) if frame_name else (0.5, 0.5, "center_fallback")
+        reframe_x, reframe_y, reframe_mode, face_detected = _focus_center(frame_dir / frame_name) if frame_name else (0.5, 0.5, "center_fallback", False)
         scenes.append({"id": f"scene-{n:04d}", "start": round(a, 3), "end": round(b, 3), "duration": round(b - a, 3),
                        "representative_frame": str((Path("frames") / frame_name).as_posix()) if frame_name else "",
                        "motion_intensity": round(float(np.mean([x["motion"] for x in rows])), 6),
                        "sharpness": round(float(np.mean([x["sharpness"] for x in rows])), 4),
                        "brightness": round(float(np.mean([x["brightness"] for x in rows])), 6),
                        "reframe_center_x": reframe_x, "reframe_center_y": reframe_y, "reframe_mode": reframe_mode,
+                       "focus_mode": reframe_mode, "face_detected": face_detected,
                        "black_frame": black >= 0.94, "excluded": excluded,
                        "exclusion_reason": "black-frame" if black >= 0.94 else "too-short" if b - a < 0.65 else ""})
     return scenes
@@ -460,6 +505,137 @@ def analyze_scenes(path: Path, output_dir: Path, cancel=None) -> list[dict]:
     scenes = _frame_features(path, output_dir, cancel=cancel)
     _json_write(output_dir / "scene-analysis.json", {"version": "cinematic-scenes-1", "source": path.name, "scenes": scenes})
     return scenes
+
+
+def _read_existing_dialogue(job: dict) -> list[dict]:
+    """Use already persisted words/captions when present; never trigger ASR here."""
+    root = Path(job.get("dir") or "")
+    for name in ("words.json", "transcript.json", "captions.json"):
+        data = _json_read(root / name, None)
+        rows = data.get("words") if isinstance(data, dict) else data
+        if isinstance(data, dict) and not isinstance(rows, list):
+            rows = data.get("segments")
+        if not isinstance(rows, list):
+            continue
+        out = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                start = float(row.get("start", row.get("start_time")))
+                end = float(row.get("end", row.get("end_time", start)))
+            except (TypeError, ValueError):
+                continue
+            text = str(row.get("text", row.get("word", row.get("content", ""))) or "").strip()
+            if text and end >= start:
+                out.append({"start": start, "end": end, "text": text})
+        if out:
+            return out
+    return []
+
+
+def _dialogue_between(words: list[dict], start: float, end: float) -> str:
+    return " ".join(str(x.get("text") or "") for x in words if float(x.get("end") or 0) >= start and float(x.get("start") or 0) <= end).strip()[:600]
+
+
+def analyze_events(scenes: list[dict], output_dir: Path, dialogue: list[dict] | None = None, cancel=None) -> list[dict]:
+    """Group adjacent detected shots into bounded events with several frame anchors."""
+    usable = [s for s in scenes if not s.get("excluded") and float(s.get("duration") or 0) >= 0.65]
+    events, current = [], []
+
+    def flush():
+        if not current:
+            return
+        shots = list(current)
+        start, end = float(shots[0]["start"]), float(shots[-1]["end"])
+        picks = [shots[0], shots[len(shots) // 2], shots[-1]]
+        frames, frame_times = [], []
+        for shot in picks:
+            frame = str(shot.get("representative_frame") or "")
+            if frame and frame not in frames:
+                frames.append(frame)
+                frame_times.append(round((float(shot["start"]) + float(shot["end"])) / 2, 3))
+        brightness = np.asarray([float(x.get("brightness") or 0) for x in shots], dtype=np.float32)
+        motion = np.asarray([float(x.get("motion_intensity") or 0) for x in shots], dtype=np.float32)
+        dialogue_text = _dialogue_between(dialogue or [], start, end)
+        focus_x = [float(x["reframe_center_x"]) for x in shots if x.get("reframe_center_x") is not None]
+        focus_y = [float(x["reframe_center_y"]) for x in shots if x.get("reframe_center_y") is not None]
+        face_count = sum(1 for x in shots if x.get("focus_mode") == "face_haar")
+        # This is only a bounded local discovery hint. It is deliberately not
+        # described as semantic understanding; AI or the explicit focus text
+        # supplies that layer when available.
+        variation = min(1.0, float(np.std(brightness)) * 4 + float(np.std(motion)) * 6) if len(shots) > 1 else 0.0
+        local_score = min(1.0, (0.45 if dialogue_text else 0.0) + 0.25 * variation + 0.2 * min(1.0, face_count / max(1, len(shots))) + 0.1 * min(1.0, len(shots) / 5))
+        events.append({"id": f"event-{len(events) + 1:04d}", "start": round(start, 3), "end": round(end, 3),
+                       "duration": round(end - start, 3), "shot_ids": [str(x["id"]) for x in shots],
+                       "representative_frames": frames[:3], "representative_frame_times": frame_times[:3],
+                       "dialogue": dialogue_text, "face_shot_count": face_count,
+                       "reframe_center_x": round(float(np.median(focus_x)) if focus_x else 0.5, 4),
+                       "reframe_center_y": round(float(np.median(focus_y)) if focus_y else 0.5, 4),
+                       "focus_mode": "face_haar" if face_count else "saliency_or_center",
+                       "local_discovery_score": round(local_score, 6), "shot_count": len(shots)})
+        current.clear()
+
+    for shot in usable:
+        if cancel and cancel():
+            raise Cancelled()
+        if current and (float(shot["end"]) - float(current[0]["start"]) > 11.0 or len(current) >= 6):
+            flush()
+        current.append(shot)
+    flush()
+    result = {"version": SEMANTIC_VERSION, "dialogue_source": "existing-local-files-only" if dialogue else "not_available",
+              "events": events}
+    _json_write(output_dir / "event-analysis.json", result)
+    return events
+
+
+def _event_candidates(events: list[dict], limit: int = 8) -> list[dict]:
+    if len(events) <= limit:
+        return list(events)
+    selected, seen = [], set()
+    # Coverage is intentional: the AI sees the whole film's possible themes,
+    # not only the sharpest or fastest frames.
+    for n in range(min(4, limit)):
+        index = min(len(events) - 1, round((len(events) - 1) * n / max(1, min(4, limit) - 1)))
+        event = events[int(index)]
+        if event["id"] not in seen:
+            selected.append(event)
+            seen.add(event["id"])
+    ranked = sorted(events, key=lambda x: (float(x.get("local_discovery_score") or 0), bool(x.get("dialogue"))), reverse=True)
+    for event in ranked:
+        if len(selected) >= limit:
+            break
+        if event["id"] not in seen:
+            selected.append(event)
+            seen.add(event["id"])
+    return sorted(selected, key=lambda x: float(x["start"]))
+
+
+def _validated_event_recommendations(notes: dict | None, events: list[dict]) -> dict[str, dict]:
+    if not isinstance(notes, dict) or notes.get("status") != "available":
+        return {}
+    known = {str(x.get("id")) for x in events}
+    rows = notes.get("recommendations")
+    if not isinstance(rows, list):
+        return {}
+    out, seen = {}, set()
+    for rank, item in enumerate(rows):
+        if not isinstance(item, dict):
+            continue
+        event_id = str(item.get("event_id") or item.get("source_id") or "")
+        if event_id not in known or event_id in seen:
+            continue
+        try:
+            score = float(item.get("score"))
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= score <= 100:
+            continue
+        phase = str(item.get("phase") or "")[:40]
+        out[event_id] = {"score": score, "rank": rank, "phase": phase,
+                         "reason": str(item.get("reason") or "AI event recommendation")[:240]}
+        seen.add(event_id)
+    return out
 
 
 def _sections(values: np.ndarray, timestamps: np.ndarray, predicate) -> list[list[float]]:
@@ -576,7 +752,7 @@ def music_path(tid: str) -> Path:
     return _track_path(_library_track(tid))
 
 
-def choose_music(options: dict, duration: float) -> tuple[dict | None, str, list[str]]:
+def choose_music(options: dict, duration: float, record_usage: bool = True) -> tuple[dict | None, str, list[str]]:
     source = options["music_source"]
     warnings = []
     if source == "original_audio":
@@ -613,7 +789,8 @@ def choose_music(options: dict, duration: float) -> tuple[dict | None, str, list
         path = _track_path(track)
         if not track.get("analysis"):
             track["analysis"] = analyze_audio(path, digest=track.get("sha256"))
-        if track["analysis"]["duration"] + 0.25 < duration:
+        remaining = float(track["analysis"]["duration"]) - float(options.get("music_start_offset") or 0)
+        if remaining + 0.25 < duration:
             continue
         all_tags = {str(x).lower() for x in (track.get("genres") or []) + (track.get("moods") or [])}
         tag_score = len(tags & all_tags) / max(1, len(tags))
@@ -626,9 +803,10 @@ def choose_music(options: dict, duration: float) -> tuple[dict | None, str, list
         return None, "No confirmed, platform-compatible local track is long enough; choose Upload or Original Audio.", ["music_library_empty_or_not_eligible"]
     candidates.sort(key=lambda x: (-x[0], float(x[1].get("last_used") or 0)))
     score, track = candidates[0]
-    track["use_count"] = int(track.get("use_count") or 0) + 1
-    track["last_used"] = _now()
-    _save_library(items)
+    if record_usage:
+        track["use_count"] = int(track.get("use_count") or 0) + 1
+        track["last_used"] = _now()
+        _save_library(items)
     path = _track_path(track)
     if options["music_start_offset"] >= track["analysis"]["duration"]:
         options["music_start_offset"] = 0.0
@@ -743,8 +921,199 @@ def _validated_ai_recommendations(notes: dict | None, scenes: list[dict]) -> dic
     return out
 
 
+def _music_phases(analysis: dict | None, duration: float) -> list[dict]:
+    """Return an intentionally uneven montage rhythm, not one cut per beat."""
+    if not analysis:
+        return [{"name": "natural", "start": 0.0, "end": duration, "pace": 2.6}]
+    return [{"name": "hook", "start": 0.0, "end": duration * 0.18, "pace": 1.8},
+            {"name": "build_up", "start": duration * 0.18, "end": duration * 0.58, "pace": 2.8},
+            {"name": "climax", "start": duration * 0.58, "end": duration * 0.84, "pace": 1.25},
+            {"name": "resolution", "start": duration * 0.84, "end": duration, "pace": 2.8}]
+
+
+def _phase_at(phases: list[dict], at: float) -> dict:
+    return next((x for x in phases if float(x["start"]) <= at < float(x["end"])), phases[-1])
+
+
+def _select_event_arc(events: list[dict], notes: dict | None, duration: float) -> tuple[list[dict], str, str]:
+    if not events:
+        return [], "", "fallback_local"
+    recommendations = _validated_event_recommendations(notes, events)
+    if recommendations:
+        target = duration + 1.0
+        positions = {str(event["id"]): index for index, event in enumerate(events)}
+        recommendation_positions = sorted(positions[event_id] for event_id in recommendations)
+        best = None
+        for left in range(len(events)):
+            total = 0.0
+            for right in range(left, min(len(events), left + 40)):
+                total += float(events[right]["duration"])
+                if total < target:
+                    continue
+                window = events[left:right + 1]
+                hits = sorted(positions[event_id] for event_id in recommendations if left <= positions[event_id] <= right)
+                score = sum(float(recommendations[events[index]["id"]]["score"]) / 100.0 for index in hits)
+                score += 0.22 * len(hits)
+                # Prefer recommendations that form a compact, related run;
+                # two distant high-scoring frames should not make a random
+                # cross-film montage beat a nearby event sequence.
+                for first, second in zip(hits, hits[1:]):
+                    score += 0.45 * max(0.0, 1.0 - (second - first) / 24.0)
+                score += 0.04 * sum(float(x.get("local_discovery_score") or 0) for x in window) / len(window)
+                score -= 0.002 * max(0.0, total - target)
+                key = (round(score, 6), len(hits), -left)
+                if best is None or key > best[0]:
+                    best = (key, window)
+                future_recommendations = [position for position in recommendation_positions if position > right]
+                close_future = future_recommendations and future_recommendations[0] <= right + 12
+                if total >= target + 12.0 and not close_future:
+                    break
+        arc = best[1] if best else events[:]
+        concept = str(notes.get("concept") or "Coherent event sequence")[:300]
+        return arc, concept, "ai_semantic"
+    target = duration + 1.0
+    best = None
+    for start in range(len(events)):
+        total = 0.0
+        for end in range(start, min(len(events), start + 18)):
+            total += float(events[end]["duration"])
+            if total >= target:
+                window = events[start:end + 1]
+                score = sum(float(x.get("local_discovery_score") or 0) for x in window) / len(window)
+                score += 0.15 if any(x.get("dialogue") for x in window) else 0.0
+                candidate = (score, window)
+                if best is None or candidate[0] > best[0]:
+                    best = candidate
+                break
+    arc = best[1] if best else events[:]
+    return arc, "Local coherent event sequence; semantic AI review was not used.", "fallback_local"
+
+
+def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], events: list[dict], options: dict,
+                        music: dict | None, music_analysis: dict | None, reason: str, warnings: list[str],
+                        semantic_notes: dict | None) -> dict:
+    duration = min(float(options["duration"]), float(source_info["duration"]))
+    arc, concept, semantic_status = _select_event_arc(events, semantic_notes, duration)
+    by_id = {str(x["id"]): x for x in scenes}
+    shot_ids = [shot_id for event in arc for shot_id in event.get("shot_ids") or []]
+    shots = [by_id[x] for x in shot_ids if x in by_id and not by_id[x].get("excluded") and float(by_id[x].get("duration") or 0) >= 0.65]
+    if not shots:
+        raise RuntimeError("No approved shots were found in the selected semantic event sequence.")
+    transition = 0.3 if options["smooth_transitions"] and len(shots) > 1 else 0.0
+    available = sum(float(x["duration"]) for x in shots)
+    if available - transition * max(0, len(shots) - 1) < duration - 0.05:
+        transition = 0.0
+        warnings.append("The selected coherent event sequence does not contain enough approved shot material for the requested duration; the result was shortened.")
+    phases = _music_phases(music_analysis, duration)
+    sync_profile = _music_sync_profile(music_analysis, float(options["music_start_offset"]), duration, options["effects_intensity"])
+    if not options["beat_sync"]:
+        sync_profile = {"mode": "off", "confidence": sync_profile.get("confidence", 0.0), "markers": []}
+    markers = list(sync_profile.get("markers") or [])
+    # First build visible timeline boundaries.  With Beat Sync enabled a
+    # usable marker is the boundary itself; the following segment begins at
+    # exactly that frame.  The preceding segment gets the crossfade overlap,
+    # so validation and FFmpeg use the same definition of the sync moment.
+    boundaries, boundary_refs, speeds, selected_shots = [0.0], [None], [], []
+    rendered = 0.0
+    for shot in shots:
+        if rendered >= duration - 0.02:
+            break
+        phase = _phase_at(phases, rendered)
+        speed = 1.0
+        if options["speed_ramp"] and options["effects_intensity"] == "strong":
+            speed = 1.04 if phase["name"] == "climax" else 0.98
+        max_visible_end = rendered + float(shot["duration"]) / speed - transition
+        target_end = min(duration, rendered + float(phase["pace"]))
+        marker = None
+        if options["beat_sync"] and markers:
+            candidates = [x for x in markers if float(x["timeline"]) > rendered + 0.65 and
+                          float(x["timeline"]) < duration - 0.15 and
+                          float(x["timeline"]) <= max_visible_end + 0.02]
+            if candidates:
+                nearest = min(candidates, key=lambda x: abs(float(x["timeline"]) - target_end))
+                if abs(float(nearest["timeline"]) - target_end) <= max(1.35, float(phase["pace"]) * 2.0):
+                    target_end, marker = float(nearest["timeline"]), nearest
+        target_end = min(duration, target_end, max_visible_end)
+        if target_end - rendered < 0.65:
+            continue
+        boundaries.append(round(target_end, 6))
+        boundary_refs.append(marker if marker and abs(float(marker["timeline"]) - target_end) <= 0.02 else None)
+        speeds.append(speed)
+        selected_shots.append(shot)
+        rendered = target_end
+    if not speeds:
+        raise RuntimeError("No approved shot contained enough source material for the selected duration.")
+    segments, rendered = [], 0.0
+    for index, shot in enumerate(selected_shots):
+        timeline_in = float(boundaries[index])
+        visible_end = float(boundaries[index + 1])
+        has_next = index < len(speeds) - 1
+        timeline_out = visible_end + (transition if has_next else 0.0)
+        speed = speeds[index]
+        phase = _phase_at(phases, timeline_in)
+        source_in = float(shot["start"])
+        source_out = min(float(shot["end"]), source_in + (timeline_out - timeline_in) * speed)
+        actual = (source_out - source_in) / speed
+        if actual < 0.65:
+            continue
+        marker = boundary_refs[index]
+        event_id = next((event["id"] for event in arc if shot["id"] in (event.get("shot_ids") or [])), "")
+        event = next((event for event in arc if event["id"] == event_id), {})
+        focus_x = float(shot.get("reframe_center_x") or event.get("reframe_center_x") or 0.5)
+        focus_y = float(shot.get("reframe_center_y") or event.get("reframe_center_y") or 0.5)
+        ai_rec = _validated_event_recommendations(semantic_notes, events).get(event_id, {}) if semantic_status == "ai_semantic" else {}
+        segments.append({"source_id": shot["id"], "event_id": event_id, "source_in": round(source_in, 3), "source_out": round(source_out, 3),
+                         "approved_source_start": round(float(shot["start"]), 3), "approved_source_end": round(float(shot["end"]), 3),
+                         "timeline_in": round(timeline_in, 3), "timeline_out": round(timeline_out, 3), "playback_speed": speed,
+                         "crop": {"mode": "face_or_saliency" if options["smart_reframe"] else "center", "smart_reframe": options["smart_reframe"],
+                                  "reframe_limit": "Light Haar face detection when visible; saliency/center fallback, no full-body tracker",
+                                  "center_x": round(focus_x, 4), "center_y": round(focus_y, 4), "zoom": 1.05 if options["dynamic_zoom"] else 1.0},
+                         "transition": {"type": "crossfade" if transition and index else "hard_cut", "duration": transition if index else 0.0},
+                         "effects": {"color_grading": options["color_grading"], "intensity": options["effects_intensity"],
+                                     "dynamic_zoom": "time-varying-scale" if options["dynamic_zoom"] else "off",
+                                     "speed_ramp": "per-segment-speed-variation" if options["speed_ramp"] else "off"},
+                         "music_phase": phase["name"], "music_beat_reference": marker.get("music") if marker else None,
+                         "sync_point": round(timeline_in, 3) if marker else None,
+                         "sync_point_type": "crossfade_start" if marker and transition else "hard_cut" if marker else "natural",
+                         "sync_error_frames": round((timeline_in - float(marker["timeline"])) * 30, 3) if marker else None,
+                         "selection_reason": f"{semantic_status}; concept={concept}; event={event_id}; phase={phase['name']}; "
+                                             f"ai={ai_rec.get('score')}; dialogue={bool(event.get('dialogue'))}; face_mode={event.get('focus_mode')}"})
+        rendered += actual - (transition if index else 0.0)
+    # A final crossfade-capacity estimate can leave a few frames unused even
+    # though the last approved shot still has source headroom.  Extend only
+    # inside that shot; never borrow an unapproved neighbour to hit duration.
+    if segments and rendered < duration - 0.001:
+        deficit = duration - rendered
+        last = segments[-1]
+        spare = max(0.0, (float(last["approved_source_end"]) - float(last["source_out"])) / float(last["playback_speed"] or 1.0))
+        if spare + 0.02 >= deficit:
+            last["source_out"] = round(float(last["source_out"]) + deficit * float(last["playback_speed"] or 1.0), 3)
+            last["timeline_out"] = round(float(last["timeline_out"]) + deficit, 3)
+            rendered = duration
+    if rendered < duration - (2.0 / 30.0 + 0.01):
+        warnings.append("The selected event sequence ended before the requested duration; no unapproved neighboring shots were added.")
+    total = round(min(rendered, duration), 3)
+    return {"planner_version": PLANNER_VERSION, "semantic_version": SEMANTIC_VERSION, "source_name": source.name,
+            "source_duration": round(source_info["duration"], 3), "track_id": (music or {}).get("track_id", ""),
+            "track_title": (music or {}).get("title", "Original Audio" if options["music_source"] == "original_audio" else ""),
+            "music_source": options["music_source"], "music_offset": round(float(options["music_start_offset"]), 3),
+            "music_duration": round(float((music_analysis or {}).get("duration") or 0), 3),
+            "music_segment": {"start": round(float(options["music_start_offset"]), 3), "end": round(float(options["music_start_offset"]) + total, 3)} if music else None,
+            "atmosphere": options["atmosphere"], "intensity": options["effects_intensity"], "requested_duration": options["duration"],
+            "total_duration": total, "transition_overlap": transition, "selection_reason": reason,
+            "semantic_concept": concept, "semantic_status": semantic_status, "selected_event_ids": [x["id"] for x in arc],
+            "warnings": warnings, "segments": segments, "beat_sync": bool(options["beat_sync"]),
+            "sync_mode": sync_profile.get("mode", "none") if options["beat_sync"] else "off",
+            "rhythm_confidence": sync_profile.get("confidence", 0.0),
+            "crossfade_sync_definition": "beat-aligned at crossfade start; visual blend spans the following overlap" if transition else "not applicable",
+            "ai_scene_selector": bool(options.get("ai_scene_selector")),
+            "ai_recommendations_applied": semantic_status == "ai_semantic"}
+
+
 def make_plan(source: Path, source_info: dict, scenes: list[dict], options: dict, music: dict | None, music_analysis: dict | None,
-              reason: str, warnings: list[str], ai_notes: dict | None = None) -> dict:
+              reason: str, warnings: list[str], ai_notes: dict | None = None, events: list[dict] | None = None) -> dict:
+    if events:
+        return _make_semantic_plan(source, source_info, scenes, events, options, music, music_analysis, reason, warnings, ai_notes)
     duration = min(float(options["duration"]), float(source_info["duration"]))
     if float(source_info["duration"]) + 0.05 < float(options["duration"]):
         warnings.append("The source is shorter than the requested edit; the output duration was capped to the source.")
@@ -805,11 +1174,16 @@ def make_plan(source: Path, source_info: dict, scenes: list[dict], options: dict
         source_in = float(scene["start"])
         if index and float(scene["start"]) >= previous_scene_start:
             source_in = max(source_in, previous_source_out)
-        source_out = min(float(source_info["duration"]), source_in + planned_output * speed)
+        source_out = min(float(scene["end"]), float(source_info["duration"]), source_in + planned_output * speed)
         output_len = (source_out - source_in) / speed
         if output_len + 0.08 < planned_output:
             warnings.append(f"Source material ended before segment {index + 1}; the edit is shorter than requested.")
-        timeline_in = visible_start
+        if not segments:
+            timeline_in = 0.0
+        else:
+            previous_end = float(segments[-1]["timeline_out"])
+            expected_in = max(0.0, previous_end - transition)
+            timeline_in = visible_start if abs(expected_in - visible_start) <= 0.08 else expected_in
         timeline_out = timeline_in + output_len
         reference = references[index] if index > 0 and sync_enabled else None
         crop_center_x = float(scene.get("reframe_center_x") or 0.5)
@@ -825,9 +1199,9 @@ def make_plan(source: Path, source_info: dict, scenes: list[dict], options: dict
                                     "dynamic_zoom": "time-varying-scale" if options["dynamic_zoom"] else "off",
                                     "speed_ramp": "per-segment-speed-variation" if options["speed_ramp"] else "off"},
                         "music_beat_reference": reference.get("music") if reference else None,
-                        "sync_point": round(visible_start, 3) if reference else None,
+                        "sync_point": round(timeline_in, 3) if reference else None,
                         "sync_point_type": "crossfade_start" if reference and transition else "hard_cut" if reference else "natural",
-                        "sync_error_frames": 0 if reference else None,
+                        "sync_error_frames": round((timeline_in - float(reference["timeline"])) * 30, 3) if reference else None,
                         "ai_score": scene.get("ai_score"),
                         "selection_reason": f"local={scene['selection_score']}; ai={scene.get('ai_score')}; motion={scene['motion_intensity']}; sharpness={scene['sharpness']}"})
         previous_source_out, previous_scene_start = source_out, float(scene["start"])
@@ -837,8 +1211,11 @@ def make_plan(source: Path, source_info: dict, scenes: list[dict], options: dict
     total = round(min(rendered_duration, duration), 3)
     return {"planner_version": PLANNER_VERSION, "source_name": source.name, "source_duration": round(source_info["duration"], 3),
             "track_id": (music or {}).get("track_id", ""), "music_offset": round(float(options["music_start_offset"]), 3),
+            "track_title": (music or {}).get("title", "Original Audio" if options["music_source"] == "original_audio" else ""),
+            "music_source": options["music_source"],
             "music_duration": round(float((music_analysis or {}).get("duration") or 0), 3), "atmosphere": options["atmosphere"],
             "intensity": options["effects_intensity"], "requested_duration": options["duration"], "total_duration": total,
+            "music_segment": {"start": round(float(options["music_start_offset"]), 3), "end": round(float(options["music_start_offset"]) + total, 3)} if music else None,
             "transition_overlap": transition, "selection_reason": reason, "warnings": warnings, "segments": segments,
             "beat_sync": bool(options["beat_sync"]), "sync_mode": sync_profile.get("mode", "none") if options["beat_sync"] else "off",
             "rhythm_confidence": sync_profile.get("confidence", 0.0),
@@ -864,6 +1241,14 @@ def validate_plan(plan: dict, source_duration: float) -> list[str]:
                 continue
             if not (0 <= a < b <= source_duration + 0.05) or speed <= 0:
                 errors.append(f"Segment {i + 1} leaves the source boundaries.")
+            approved_start = seg.get("approved_source_start")
+            approved_end = seg.get("approved_source_end")
+            if approved_start is not None and approved_end is not None:
+                try:
+                    if a < float(approved_start) - 0.02 or b > float(approved_end) + 0.02:
+                        errors.append(f"Segment {i + 1} leaves its approved shot/event boundary.")
+                except (TypeError, ValueError):
+                    errors.append(f"Segment {i + 1} has invalid approved shot/event boundaries.")
             if to <= ti or ti < -0.01:
                 errors.append(f"Segment {i + 1} has an invalid timeline range.")
             if i and ti > previous_out + 0.08:
@@ -914,6 +1299,45 @@ def _ffmpeg_cancel(cmd: list[str], cancel=None):
     stderr = proc.stderr.read()[-3000:]
     if proc.returncode:
         raise RuntimeError(f"FFmpeg render failed: {stderr[-1200:]}")
+
+
+def _audio_samples(path: Path, start: float = 0.0, duration: float | None = None) -> np.ndarray:
+    cmd = ["ffmpeg", "-v", "error", "-ss", f"{max(0.0, start):.3f}", "-i", str(path)]
+    if duration is not None:
+        cmd += ["-t", f"{max(0.0, duration):.3f}"]
+    cmd += ["-vn", "-ac", "1", "-ar", "8000", "-f", "f32le", "pipe:1"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=_NO_WINDOW)
+    raw, err = proc.communicate(timeout=180)
+    if proc.returncode:
+        raise RuntimeError(f"Audio verification failed: {err.decode('utf-8', 'replace')[-800:]}")
+    return np.frombuffer(raw, dtype=np.float32)
+
+
+def verify_rendered_music(output: Path, music_path: Path, music_start: float, duration: float) -> dict:
+    """Confirm that the selected track's decoded spectrum is present in the result."""
+    selected = _audio_samples(music_path, music_start, duration)
+    rendered = _audio_samples(output, 0.0, duration)
+    sample_count = min(len(selected), len(rendered))
+    if sample_count < 8000:
+        return {"status": "not_enough_audio", "selected_sha256": _sha256(music_path), "matched_fraction": 0.0}
+    selected, rendered = selected[:sample_count], rendered[:sample_count]
+    selected_rms = float(np.sqrt(np.mean(selected * selected) + 1e-12))
+    if selected_rms < 1e-5:
+        return {"status": "selected_track_is_silent", "selected_sha256": _sha256(music_path), "matched_fraction": 0.0}
+    chunk = 4000
+    similarities = []
+    window = np.hanning(chunk).astype(np.float32)
+    for start in range(0, sample_count - chunk + 1, chunk):
+        a, b = selected[start:start + chunk] * window, rendered[start:start + chunk] * window
+        fa, fb = np.abs(np.fft.rfft(a))[1:], np.abs(np.fft.rfft(b))[1:]
+        denom = float(np.linalg.norm(fa) * np.linalg.norm(fb))
+        if denom > 1e-8:
+            similarities.append(float(np.dot(fa, fb) / denom))
+    mean_similarity = float(np.mean(similarities)) if similarities else 0.0
+    matched_fraction = float(np.mean(np.asarray(similarities) >= 0.35)) if similarities else 0.0
+    return {"status": "present" if mean_similarity >= 0.35 and matched_fraction >= 0.5 else "not_confirmed",
+            "selected_sha256": _sha256(music_path), "mean_spectral_similarity": round(mean_similarity, 4),
+            "matched_fraction": round(matched_fraction, 4), "checked_seconds": round(sample_count / 8000, 3)}
 
 
 def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict, output: Path, cancel=None) -> dict:
@@ -1008,12 +1432,25 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
     planned_duration = float(plan.get("total_duration") or accumulated)
     cmd += ["-t", f"{planned_duration:.3f}", "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-r", "30", "-pix_fmt", "yuv420p"]
     if audio:
-        cmd += ["-c:a", "aac", "-b:a", "192k"]
+        cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
     cmd += ["-movflags", "+faststart", str(output)]
     began = time.monotonic()
     _ffmpeg_cancel(cmd, cancel=cancel)
+    if music_path:
+        selected_duration = max(0.0, float(validate_music(music_path)["duration"]) - float(plan.get("music_offset") or 0))
+        # A deliberately short explicit track may be followed by silence, but
+        # it must never be looped.  Verify the exact selected bytes for the
+        # portion that can actually be present in the output.
+        music_verification = verify_rendered_music(output, music_path, float(plan.get("music_offset") or 0),
+                                                   min(planned_duration, selected_duration))
+    else:
+        music_verification = None
+    if music_path and music_verification.get("status") != "present":
+        output.unlink(missing_ok=True)
+        raise RuntimeError("The selected music could not be confirmed in the rendered audio; the edit was not published as ready.")
     return {"render_seconds": round(time.monotonic() - began, 3), "duration": round(planned_duration, 3), "width": 1080, "height": 1920,
-            "fps": 30, "audio": bool(audio), "cpu_ram_vram": "NOT AVAILABLE: runtime metrics are not recorded"}
+            "fps": 30, "audio": bool(audio), "music_verification": music_verification,
+            "cpu_ram_vram": "NOT AVAILABLE: runtime metrics are not recorded"}
 
 
 def _job_file(job: dict, name: str) -> Path:
@@ -1049,9 +1486,14 @@ def _load_all():
 def public_job(job: dict) -> dict:
     out = {k: v for k, v in job.items() if k not in ("dir", "user", "source_path", "cancel_requested", "selected_music")}
     out["source"] = {"name": (job.get("source") or {}).get("name", ""), "duration": (job.get("source") or {}).get("duration", 0)}
+    selected = dict(job.get("selected_music") or {})
+    selected.pop("path", None)
+    out["selected_music"] = selected
+    out["effective_options"] = job.get("effective_options") or job.get("options") or {}
+    out["music_status"] = "required" if job.get("status") == "music_required" else "selected" if selected.get("title") else "original_audio" if (job.get("options") or {}).get("music_source") == "original_audio" else "pending"
     out["files"] = {}
     for name, public_name in (("result.mp4", "video"), ("edit-plan.json", "plan"), ("music-analysis.json", "music_analysis"),
-                              ("scene-analysis.json", "scenes"), ("ai-scene-selection.json", "ai_scene_selection"),
+                              ("scene-analysis.json", "scenes"), ("event-analysis.json", "events"), ("ai-scene-selection.json", "ai_scene_selection"),
                               ("license.json", "license"), ("metrics.json", "metrics")):
         if _job_file(job, name).is_file():
             out["files"][public_name] = f"/media/cinematic/{job['id']}/{name}"
@@ -1078,19 +1520,34 @@ def any_running() -> bool:
 def create_job(uid: str, source_path: Path, filename: str, options: dict | None = None) -> dict:
     info = validate_video(source_path)
     opts = normalize_options(options)
+    music, reason, warnings = choose_music(opts, opts["duration"])
+    selected = {}
+    music_required = False
+    if music:
+        verify_music_decode(Path(music["path"]))
+    elif opts["music_source"] == "auto":
+        music_required = True
+        warnings.append("Music is required for Auto. Choose a confirmed library track or upload music; Original Audio requires an explicit choice.")
     jid = "cin-" + uuid.uuid4().hex[:14]
     root = config.user_dir(uid) / "cinematic" / jid
     root.mkdir(parents=True, exist_ok=False)
     dest = root / ("source" + source_path.suffix.lower())
     shutil.move(str(source_path), dest)
-    job = {"id": jid, "user": uid, "dir": str(root), "created": _now(), "kind": "cinematic_edit", "status": "queued",
-           "stage": "Waiting", "progress": 0.0, "error": "", "options": opts,
+    if music:
+        selected = _snapshot_music(root, music)
+    elif opts["music_source"] == "original_audio":
+        selected = {"track_id": "", "title": "Original Audio", "source": "original_audio"}
+    effective = _effective_options(opts, music)
+    job = {"id": jid, "user": uid, "dir": str(root), "created": _now(), "kind": "cinematic_edit", "status": "music_required" if music_required else "queued",
+           "stage": "Music required" if music_required else "Waiting", "progress": 0.0, "error": "", "options": opts, "effective_options": effective,
            "source": {"name": _clean_name(filename, "source"), "duration": round(info["duration"], 3)}, "source_path": str(dest),
-           "warnings": [], "selection_reason": "", "selected_music": {}, "repeat": False}
+           "warnings": warnings, "selection_reason": reason, "selected_music": selected, "repeat": False,
+           "music_required": music_required}
     with _lock:
         _jobs[jid] = job
     _save_job(job)
-    _queue.put(jid)
+    if not music_required:
+        _queue.put(jid)
     return public_job(job)
 
 
@@ -1098,7 +1555,7 @@ def cancel_job(uid: str, jid: str) -> dict:
     job = get_job(uid, jid)
     if not job:
         raise FileNotFoundError("Cinematic edit not found.")
-    if job.get("status") in ("done", "error", "cancelled"):
+    if job.get("status") in ("done", "error", "cancelled", "music_required"):
         return public_job(job)
     job["cancel_requested"] = True
     job["stage"] = "Cancelling"
@@ -1124,71 +1581,135 @@ def _update(job: dict, **values):
     _save_job(job)
 
 
-def _ai_scene_notes(job: dict, scenes: list[dict], options: dict) -> dict:
+def _ai_scene_notes(job: dict, events: list[dict], options: dict, cancel=None) -> dict:
+    primary_model = options.get("ai_model") or "google/gemini-2.5-flash-lite"
     if not options.get("ai_scene_selector"):
-        return {"status": "not_requested", "model": "", "calls": 0, "estimated_cost_usd": None}
-    usable = [dict(s) for s in scenes if not s.get("excluded") and float(s.get("duration") or 0) >= 0.65]
-    if not usable:
-        return {"status": "fallback_local", "model": "google/gemini-2.5-flash-lite", "calls": 0,
-                "estimated_cost_usd": None, "error": "No usable scenes for AI review."}
-    max_motion = max(float(s.get("motion_intensity") or 0) for s in usable) or 1.0
-    max_sharp = max(float(s.get("sharpness") or 0) for s in usable) or 1.0
-    for scene in usable:
-        scene["local_score"] = _scene_score(scene, options["atmosphere"], max_motion, max_sharp)
-    # Preselect by local evidence, not by film order.  The request is still
-    # bounded and each selected frame is sent as bytes below.
-    candidates = sorted(usable, key=lambda s: s["local_score"], reverse=True)[:8]
-    prompt_rows = [{k: scene.get(k) for k in ("id", "start", "end", "duration", "motion_intensity", "sharpness", "brightness", "local_score")}
-                   for scene in candidates]
-    prompt = ("Select cinematic scenes only from this bounded list and the attached representative frames. Do not invent "
-              "content and do not use paths. Return a JSON array with source_id, score 0-100, and a short reason. Rank the "
-              "array in the suggested sequence. Atmosphere: " + options["atmosphere"] + ". Candidates:\n" +
-              json.dumps(prompt_rows, ensure_ascii=False))
-    images = []
+        return {"status": "not_requested", "model": "", "calls": 0, "estimated_cost_usd": None,
+                "semantic": False}
+    candidates = _event_candidates(events, 8)
+    if not candidates:
+        return {"status": "fallback_local", "model": primary_model, "calls": 0,
+                "estimated_cost_usd": None, "semantic": False, "error": "No grouped events for AI review."}
+    if cancel and cancel():
+        raise Cancelled()
+    rows, images = [], []
     job_dir = Path(job["dir"]).resolve()
-    for scene in candidates:
-        rel = Path(str(scene.get("representative_frame") or ""))
-        frame = (job_dir / rel).resolve()
-        if job_dir not in frame.parents or not frame.is_file() or frame.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
-            continue
-        try:
-            raw = frame.read_bytes()
-        except OSError:
-            continue
-        if 0 < len(raw) <= 512 * 1024:
-            images.append((raw, "image/jpeg" if frame.suffix.lower() in (".jpg", ".jpeg") else "image/png"))
-    if len(images) != len(candidates):
-        return {"status": "fallback_local", "model": "google/gemini-2.5-flash-lite", "calls": 0,
-                "estimated_cost_usd": None, "error": "Representative frames were not available for the bounded AI request."}
+    for event in candidates:
+        frame_labels = []
+        for index, rel_value in enumerate(event.get("representative_frames") or []):
+            rel = Path(str(rel_value))
+            frame = (job_dir / rel).resolve()
+            if job_dir not in frame.parents or not frame.is_file() or frame.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
+                continue
+            try:
+                raw = frame.read_bytes()
+            except OSError:
+                continue
+            if 0 < len(raw) <= 512 * 1024:
+                frame_labels.append(f"{event['id']}:frame-{index + 1}")
+                images.append((raw, "image/jpeg" if frame.suffix.lower() in (".jpg", ".jpeg") else "image/png"))
+        rows.append({"event_id": event["id"], "start": event["start"], "end": event["end"], "duration": event["duration"],
+                     "shot_count": event["shot_count"], "dialogue": event.get("dialogue", ""),
+                     "focus_mode": event.get("focus_mode"), "frame_labels": frame_labels})
+    if any(not row["frame_labels"] for row in rows):
+        return {"status": "fallback_local", "model": primary_model, "calls": 0,
+                "estimated_cost_usd": None, "semantic": False, "error": "Grouped-event frames were not available for the bounded AI request."}
+    focus = options.get("edit_focus") or "auto"
+    focus_text = options.get("edit_focus_text") or ""
+    prompt = ("Create one coherent cinematic montage from the bounded event batches below. Do not invent content, "
+              "do not use local paths, and do not select an event unless its attached frames support the decision. "
+              "Return an object with concept, recommendations (event_id, score 0-100, phase hook/build_up/climax/resolution, "
+              "reason), and structure. Prefer character/event continuity over motion or sharpness. The attached images are "
+              "in the frame_labels order in each row. Atmosphere=" + options["atmosphere"] + "; Edit Focus=" + focus +
+              (f" ({focus_text})" if focus_text else "") + ". Events:\n" + json.dumps(rows, ensure_ascii=False))
+    schema = {"type": "object", "properties": {"concept": {"type": "string"},
+                                                   "recommendations": {"type": "array", "items": {"type": "object", "properties": {
+                                                       "event_id": {"type": "string"}, "score": {"type": "number"},
+                                                       "phase": {"type": "string"}, "reason": {"type": "string"}}}},
+                                                   "structure": {"type": "array"}}}
     try:
         from . import brain
         audit = {}
-        answer, model, spent = brain.ask_ai(
-            prompt,
-            {"type": "array", "items": {"type": "object", "properties": {"source_id": {"type": "string"},
-                                                                                "score": {"type": "number"},
-                                                                                "reason": {"type": "string"}}}},
-            purpose="Cinematic scene selector", timeout=45, cheap=True, images=images, audit=audit,
-            model_override="google/gemini-2.5-flash-lite")
-        recs = _validated_ai_recommendations({"status": "available", "candidate_ids": [s["id"] for s in candidates],
-                                              "recommendations": answer}, scenes)
+        answer, model, spent = brain.ask_ai(prompt, schema, purpose="Cinematic semantic montage", timeout=45, cheap=True,
+                                            images=images, audit=audit, model_override=primary_model)
+        if isinstance(answer, list):
+            answer = {"concept": "", "recommendations": answer, "structure": []}
+        recs = _validated_event_recommendations({"status": "available", "recommendations": (answer or {}).get("recommendations") if isinstance(answer, dict) else []}, events)
         if not recs:
             return {"status": "fallback_local", "model": model, "calls": 1, "tokens": spent,
-                    "estimated_cost_usd": None, "error": "The AI response did not contain valid scene IDs and scores."}
-        prices = getattr(brain, "VIEWER_TOKEN_PRICES", {}).get(model)
-        estimated = round(audit.get("input_tokens", 0) * prices[0] + audit.get("output_tokens", 0) * prices[1], 8) if prices else None
-        return {"status": "available", "model": model, "calls": 1, "tokens": spent,
-                "input_tokens": audit.get("input_tokens", 0), "output_tokens": audit.get("output_tokens", 0),
-                "estimated_cost_usd": estimated, "cost_note": "Estimated text-token cost; provider billing and image-token charges are not returned.",
-                "candidate_ids": [s["id"] for s in candidates], "recommendations": answer}
+                    "estimated_cost_usd": None, "semantic": False, "error": "The AI response did not contain valid event IDs and scores."}
+        prices = getattr(brain, "VIEWER_TOKEN_PRICES", {})
+        def cost(audit_data, model_name):
+            rate = prices.get(model_name)
+            return (audit_data.get("input_tokens", 0) * rate[0] + audit_data.get("output_tokens", 0) * rate[1]) if rate else 0.0
+        estimated = cost(audit, model)
+        concept = str((answer or {}).get("concept") or "").strip()[:300] if isinstance(answer, dict) else ""
+        final_model = str(os.getenv("PEAKCUT_CINEMATIC_FINAL_MODEL") or "").strip()
+        final_error = ""
+        if final_model and final_model != model:
+            if cancel and cancel():
+                raise Cancelled()
+            final_audit = {}
+            try:
+                final_prompt = prompt + "\nPrimary review (use only as a hint; re-check the attached frames):\n" + json.dumps(answer, ensure_ascii=False)
+                final_answer, final_used, final_spent = brain.ask_ai(final_prompt, schema, purpose="Cinematic final semantic plan",
+                                                                     timeout=45, cheap=False, images=images, audit=final_audit,
+                                                                     model_override=final_model)
+                final_answer = final_answer if isinstance(final_answer, dict) else {"recommendations": final_answer}
+                final_recs = _validated_event_recommendations({"status": "available", "recommendations": final_answer.get("recommendations")}, events)
+                if final_recs:
+                    answer, recs, model, spent, concept = final_answer, final_recs, final_used, spent + final_spent, str(final_answer.get("concept") or concept)[:300]
+                    estimated += cost(final_audit, final_used)
+                else:
+                    final_error = "Final semantic model returned no valid event IDs; primary review was retained."
+            except Exception as e:  # noqa: BLE001 - primary review remains usable
+                final_error = f"Final semantic model unavailable: {str(e)[:180]}"
+        result = {"status": "available", "model": model, "calls": 2 if final_model and not final_error else 1, "tokens": spent,
+                  "input_tokens": audit.get("input_tokens", 0) + (final_audit.get("input_tokens", 0) if 'final_audit' in locals() else 0),
+                  "output_tokens": audit.get("output_tokens", 0) + (final_audit.get("output_tokens", 0) if 'final_audit' in locals() else 0),
+                  "estimated_cost_usd": round(estimated, 8),
+                  "cost_note": "Estimated text-token cost; provider billing and image-token charges are not returned.",
+                  "candidate_event_ids": [x["id"] for x in candidates], "recommendations": (answer or {}).get("recommendations", []),
+                  "structure": (answer or {}).get("structure", []), "concept": concept, "semantic": True}
+        if final_error:
+            result["final_model_note"] = final_error
+        return result
+    except Cancelled:
+        raise
     except Exception as e:  # noqa: BLE001
-        return {"status": "fallback_local", "model": "google/gemini-2.5-flash-lite", "calls": 1, "error": str(e)[:240], "estimated_cost_usd": None}
+        return {"status": "fallback_local", "model": primary_model, "calls": 1, "error": str(e)[:240],
+                "estimated_cost_usd": None, "semantic": False}
+
+
+def _snapshot_music(root: Path, music: dict) -> dict:
+    """Keep the exact selected bytes beside the plan so repeat render is deterministic."""
+    source = Path(str(music.get("path") or "")).resolve()
+    verify_music_decode(source)
+    destination = root / f"music-source{source.suffix.lower()}"
+    shutil.copy2(source, destination)
+    out = {k: v for k, v in music.items() if k not in ("path", "analysis")}
+    out["path"] = str(destination)
+    out["sha256"] = _sha256(destination)
+    out["duration"] = round(float((music.get("analysis") or {}).get("duration") or music.get("duration") or 0), 3)
+    return out
+
+
+def _effective_options(options: dict, music: dict | None) -> dict:
+    out = normalize_options(options)
+    if music:
+        out["music_track_id"] = str(music.get("track_id") or "")
+        out["music_upload_id"] = ""
+        out["music_source"] = "upload" if music.get("track_id") == "upload" else "library"
+        out["music_title"] = str(music.get("title") or "Selected music")[:200]
+    elif out["music_source"] == "original_audio":
+        out["music_title"] = "Original Audio"
+    return out
 
 
 def _run_job(job: dict):
     uid = job["user"]
     source = Path(job["source_path"])
-    options = normalize_options(job.get("options"))
+    options = normalize_options(job.get("effective_options") or job.get("options"))
     def cancelled():
         return bool(job.get("cancel_requested"))
     try:
@@ -1205,14 +1726,29 @@ def _run_job(job: dict):
             if music_path and not music_path.is_file() and selected.get("track_id") not in ("", "upload"):
                 track = _library_track(selected["track_id"])
                 music_path = _track_path(track)
+            if music_path:
+                verify_music_decode(music_path, cancel=cancelled)
+            elif options["music_source"] != "original_audio":
+                raise MusicRequired("Music is required for Auto, Library or Upload. The saved job has no selected music.")
             metrics = render_plan(source, music_path, plan, options, _job_file(job, "result.mp4"), cancel=cancelled)
         else:
             _update(job, status="running", stage="Detecting scenes", progress=0.1)
             scenes = analyze_scenes(source, Path(job["dir"]), cancel=cancelled)
-            ai_notes = _ai_scene_notes(job, scenes, options)
+            dialogue = _read_existing_dialogue(job)
+            events = analyze_events(scenes, Path(job["dir"]), dialogue=dialogue, cancel=cancelled)
+            ai_notes = _ai_scene_notes(job, events, options, cancel=cancelled)
             _json_write(_job_file(job, "ai-scene-selection.json"), ai_notes)
             _update(job, stage="Selecting music", progress=0.28)
-            music, reason, warnings = choose_music(options, options["duration"])
+            selected = job.get("selected_music") or {}
+            music = None
+            reason = job.get("selection_reason") or ""
+            warnings = list(job.get("warnings") or [])
+            if options["music_source"] != "original_audio":
+                music_path = Path(str(selected.get("path") or ""))
+                if not selected or not music_path.is_file():
+                    raise MusicRequired("Music is required for Auto, Library or Upload. Choose a confirmed local track or upload music.")
+                decoded = verify_music_decode(music_path, cancel=cancelled)
+                music = {**selected, "path": str(music_path), "analysis": None, "sha256": decoded["sha256"]}
             music_analysis = (music or {}).get("analysis")
             if music and not music_analysis:
                 music_analysis = analyze_audio(Path(music["path"]))
@@ -1221,12 +1757,13 @@ def _run_job(job: dict):
                 _json_write(_job_file(job, "music-analysis.json"), {"track_id": music.get("track_id"), **music_analysis})
             else:
                 _json_write(_job_file(job, "music-analysis.json"), {"source": "original_audio", "reason": reason, "analysis": "NOT APPLICABLE"})
-            if not music and options["music_source"] == "auto":
-                options["keep_original_dialogue"] = source_info["has_audio"]
-                warnings.append("Auto music did not find a confirmed eligible library track; Original Audio was used.")
             _update(job, stage="Building edit plan", progress=0.45, warnings=warnings, selection_reason=reason,
-                    selected_music={k: v for k, v in (music or {}).items() if k != "analysis"})
-            plan = make_plan(source, source_info, scenes, options, music, music_analysis, reason, warnings, ai_notes=ai_notes)
+                    selected_music={k: v for k, v in (music or selected or {}).items() if k != "analysis"})
+            plan = make_plan(source, source_info, scenes, options, music, music_analysis, reason, warnings, ai_notes=ai_notes, events=events)
+            if music:
+                selected_with_segment = dict(music)
+                selected_with_segment["segment"] = plan.get("music_segment")
+                _update(job, selected_music={k: v for k, v in selected_with_segment.items() if k != "analysis"})
             plan_errors = validate_plan(plan, source_info["duration"])
             if plan_errors:
                 raise ValueError("Invalid edit plan: " + " ".join(plan_errors))
@@ -1238,6 +1775,8 @@ def _run_job(job: dict):
             metrics = render_plan(source, Path(music["path"]) if music else None, plan, options, _job_file(job, "result.mp4"), cancel=cancelled)
         _json_write(_job_file(job, "metrics.json"), {**metrics, "ai_usage": _json_read(_job_file(job, "ai-scene-selection.json"), {"status": "not_requested"})})
         _update(job, status="done", stage="Ready", progress=1.0, error="", repeat=False, finished_at=_now())
+    except MusicRequired as e:
+        _update(job, status="music_required", stage="Music required", progress=0.0, error=str(e), repeat=False)
     except Cancelled:
         _update(job, status="cancelled", stage="Cancelled", progress=job.get("progress", 0), error="Cancelled by you.", repeat=False)
         _job_file(job, "result.mp4").unlink(missing_ok=True)

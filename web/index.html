@@ -3518,7 +3518,10 @@ function drawCinematic() {
         <label id="ce_upload_wrap" hidden>Music file<input id="ce_music_file" type="file" accept="audio/mpeg,audio/wav,audio/mp4,audio/flac,audio/ogg,.mp3,.wav,.m4a,.flac,.ogg"><span class="cin-note">Upload is used only for this edit unless saved below.</span></label><label id="ce_save_wrap" hidden style="flex-direction:row;align-items:center;color:var(--text)"><input id="ce_save_upload" type="checkbox"> Also save this upload in Music Library</label>
         <label>Duration<select id="ce_duration"><option>15</option><option selected>30</option><option>45</option><option>60</option></select></label>
         <label>Effects intensity<select id="ce_intensity"><option value="light">Light</option><option value="medium" selected>Medium</option><option value="strong">Strong</option></select></label>
+        <label>Edit Focus<select id="ce_focus"><option value="auto">Auto</option><option value="character">Character name or description</option><option value="event">Specific event</option><option value="emotional">Emotional moment</option><option value="action">Action sequence</option></select></label>
+        <label id="ce_focus_text_wrap" hidden>Focus description<input id="ce_focus_text" type="text" maxlength="240" placeholder="e.g. Guy chooses to become a hero"></label>
         <label>Music start offset<input id="ce_offset" type="number" min="0" step="0.1" value="0"> seconds</label>
+        <label>Semantic AI model<select id="ce_ai_model"><option value="google/gemini-2.5-flash-lite" selected>Gemini Flash Lite (bounded primary)</option><option value="google/gemini-2.5-flash">Gemini Flash</option></select></label>
       </div>
       <div class="cin-checks">
         <label><input id="ce_beat" type="checkbox" checked> Beat Sync</label><label><input id="ce_zoom" type="checkbox" checked> Dynamic Zoom</label>
@@ -3527,7 +3530,8 @@ function drawCinematic() {
         <label><input id="ce_dialogue" type="checkbox"> Keep Original Dialogue</label><label><input id="ce_duck" type="checkbox" checked> Audio Ducking</label>
         <label><input id="ce_ai" type="checkbox"> AI Scene Review (bounded)</label>
       </div>
-      <p class="cin-note" style="margin-top:14px">Smart Reframe uses a local visual-saliency center; face/character tracking is unavailable. Gentle Speed Variation changes speed per scene, not as an intra-scene optical-flow ramp. AI Scene Review sends at most eight representative frames and falls back locally if unavailable. Auto selection never uses an unconfirmed track or downloads music. If none is eligible, the edit uses Original Audio and records the reason.</p>
+      <p id="ce_music_status" class="cin-note" style="margin-top:14px">Music selection is checked before rendering. Auto never falls back to Original Audio.</p>
+      <p class="cin-note">Smart Reframe uses light local face detection when a face is visible, otherwise saliency/center fallback; it is not full-body tracking. Gentle Speed Variation changes speed per shot, not as an intra-shot optical-flow ramp. AI Scene Review groups neighboring shots, sends bounded event batches with multiple frames and existing dialogue when available, and labels local fallback explicitly.</p>
       <div class="cin-actions"><button type="button" class="btn primary" data-ce="create">Create Cinematic Edit</button><button type="button" class="btn" data-ce="refresh">Refresh</button></div>
     </section>
     <section class="card cin-lib"><h2>Music Library</h2><p class="cin-note">Local only · <a href="https://studio.youtube.com/" target="_blank" rel="noopener">YouTube Audio Library</a> · <a href="https://pixabay.com/music/" target="_blank" rel="noopener">Pixabay Music</a>. A catalogue listing is not proof of commercial rights.</p>
@@ -3545,17 +3549,20 @@ function drawCinematic() {
   $("#ce_track_wrap").hidden = source !== "library";
   $("#ce_upload_wrap").hidden = source !== "upload";
   $("#ce_save_wrap").hidden = source !== "upload";
+  $("#ce_focus_text_wrap").hidden = $("#ce_focus").value === "auto";
 }
 function ceJobHtml(j) {
   const done = j.status === "done", running = ["queued", "running"].includes(j.status), pct = Math.round((j.progress || 0) * 100);
   const files = j.files || {};
-  return `<article class="cin-job"><div>${done && files.video ? `<video controls preload="metadata" src="${esc(files.video)}"></video>` : `<div class="empty" style="min-height:220px;display:grid;place-items:center">${esc(j.stage || j.status)}</div>`}</div><div><h3>${esc(j.source?.name || "Cinematic edit")}</h3><p class="cin-note">${esc(j.stage || j.status)} · ${pct}%${j.selection_reason ? `<br>${esc(j.selection_reason)}` : ""}</p>${running ? `<div class="bar"><i style="width:${pct}%"></i></div><button type="button" class="btn sm danger" data-ce="cancel" data-id="${esc(j.id)}">Cancel</button>` : ""}${j.status === "error" ? `<p class="bad">${esc(j.error || "The edit stopped.")}</p>` : ""}${j.warnings?.length ? `<p class="cin-note">${j.warnings.map(esc).join("<br>")}</p>` : ""}<div class="cin-actions">${done && files.video ? `<a class="btn sm primary" href="${esc(files.video)}?download=1">Download MP4</a><a class="btn sm" href="${esc(files.plan)}" target="_blank" rel="noopener">edit-plan.json</a><a class="btn sm" href="${esc(files.music_analysis)}" target="_blank" rel="noopener">music-analysis.json</a><a class="btn sm" href="${esc(files.scenes)}" target="_blank" rel="noopener">Scene analysis</a>${files.ai_scene_selection ? `<a class="btn sm" href="${esc(files.ai_scene_selection)}" target="_blank" rel="noopener">AI scene review</a>` : ""}${files.license ? `<a class="btn sm" href="${esc(files.license)}" target="_blank" rel="noopener">License</a>` : ""}${files.metrics ? `<a class="btn sm" href="${esc(files.metrics)}" target="_blank" rel="noopener">Metrics</a>` : ""}<button type="button" class="btn sm" data-ce="rerender" data-id="${esc(j.id)}">Render again</button>` : ""}</div></div></article>`;
+  const selected = j.selected_music || {}, segment = selected.segment || {};
+  const musicLine = j.status === "music_required" ? `<p class="bad">Music required: choose a confirmed Library track or Upload music. Original Audio is available only when explicitly selected.</p>` : selected.title ? `<p class="cin-note">Music: <b>${esc(selected.title)}</b>${segment.start !== undefined ? ` · used ${fmt(segment.start)}–${fmt(segment.end)} s` : ""}</p>` : "";
+  return `<article class="cin-job"><div>${done && files.video ? `<video controls preload="metadata" src="${esc(files.video)}"></video>` : `<div class="empty" style="min-height:220px;display:grid;place-items:center">${esc(j.stage || j.status)}</div>`}</div><div><h3>${esc(j.source?.name || "Cinematic edit")}</h3><p class="cin-note">${esc(j.stage || j.status)} · ${pct}%${j.selection_reason ? `<br>${esc(j.selection_reason)}` : ""}</p>${musicLine}${running ? `<div class="bar"><i style="width:${pct}%"></i></div><button type="button" class="btn sm danger" data-ce="cancel" data-id="${esc(j.id)}">Cancel</button>` : ""}${j.status === "error" ? `<p class="bad">${esc(j.error || "The edit stopped.")}</p>` : ""}${j.warnings?.length ? `<p class="cin-note">${j.warnings.map(esc).join("<br>")}</p>` : ""}<div class="cin-actions">${done && files.video ? `<a class="btn sm primary" href="${esc(files.video)}?download=1">Download MP4</a><a class="btn sm" href="${esc(files.plan)}" target="_blank" rel="noopener">edit-plan.json</a><a class="btn sm" href="${esc(files.music_analysis)}" target="_blank" rel="noopener">music-analysis.json</a><a class="btn sm" href="${esc(files.scenes)}" target="_blank" rel="noopener">Scene analysis</a>${files.events ? `<a class="btn sm" href="${esc(files.events)}" target="_blank" rel="noopener">Event analysis</a>` : ""}${files.ai_scene_selection ? `<a class="btn sm" href="${esc(files.ai_scene_selection)}" target="_blank" rel="noopener">AI scene review</a>` : ""}${files.license ? `<a class="btn sm" href="${esc(files.license)}" target="_blank" rel="noopener">License</a>` : ""}${files.metrics ? `<a class="btn sm" href="${esc(files.metrics)}" target="_blank" rel="noopener">Metrics</a>` : ""}<button type="button" class="btn sm" data-ce="rerender" data-id="${esc(j.id)}">Render again</button>` : ""}</div></div></article>`;
 }
 async function loadCinematic() {
   const v = id => $(id)?.value || "";
   S.ce.filters = {q:v("#ce_lib_query"), genre:v("#ce_lib_genre"), mood:v("#ce_lib_mood"), min_bpm:v("#ce_lib_min_bpm"), max_bpm:v("#ce_lib_max_bpm"), min_duration:v("#ce_lib_min_duration"), max_duration:v("#ce_lib_max_duration")};
   const p = new URLSearchParams(Object.entries(S.ce.filters).filter(([,x]) => x !== ""));
-  try { const [tracks, jobs] = await Promise.all([api("/api/music?" + p.toString()), api("/api/cinematic/jobs")]); S.ce.tracks = tracks.tracks || []; S.ce.categories = tracks.categories || []; S.ce.jobs = jobs || []; drawCinematic(); }
+  try { const [tracks, jobs] = await Promise.all([api("/api/music?" + p.toString()), api("/api/cinematic/jobs")]); S.ce.tracks = tracks.tracks || []; S.ce.categories = tracks.categories || []; S.ce.jobs = jobs || []; drawCinematic(); await cePreviewMusic(); }
   catch (e) { if (S.view === "cinematic") toast(e.message, "bad"); }
 }
 function ceFormOptions() {
@@ -3564,7 +3571,17 @@ function ceFormOptions() {
     duration: Number(val("#ce_duration")), effects_intensity: val("#ce_intensity"), music_start_offset: Number(val("#ce_offset") || 0),
     beat_sync: $("#ce_beat")?.checked, dynamic_zoom: $("#ce_zoom")?.checked, color_grading: $("#ce_grade")?.checked,
     smart_reframe: $("#ce_reframe")?.checked, smooth_transitions: $("#ce_trans")?.checked, speed_ramp: $("#ce_speed")?.checked,
-    keep_original_dialogue: $("#ce_dialogue")?.checked, audio_ducking: $("#ce_duck")?.checked, ai_scene_selector: $("#ce_ai")?.checked};
+    keep_original_dialogue: $("#ce_dialogue")?.checked, audio_ducking: $("#ce_duck")?.checked, ai_scene_selector: $("#ce_ai")?.checked,
+    edit_focus: val("#ce_focus"), edit_focus_text: val("#ce_focus_text"), ai_model: val("#ce_ai_model")};
+}
+async function cePreviewMusic() {
+  const note = $("#ce_music_status"); if (!note) return;
+  try {
+    const p = await api("/api/cinematic/music-preview", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(ceFormOptions())});
+    if (p.status === "selected") note.innerHTML = `Selected music: <b>${esc(p.title)}</b> · used ${fmt(p.segment.start)}–${fmt(p.segment.end)} s before rendering.`;
+    else if (p.status === "music_required") note.textContent = "Music required: Auto found no confirmed local track long enough. Choose Library or Upload; Original Audio is explicit only.";
+    else note.textContent = "Original Audio explicitly selected; no music track will be mixed.";
+  } catch (e) { note.textContent = `Music preview unavailable: ${e.message}`; }
 }
 async function ceCreate() {
   const video = $("#ce_video")?.files?.[0]; if (!video) return toast("Choose a source video first.", "bad");
@@ -3581,7 +3598,7 @@ async function ceCreate() {
   }
   const fd = new FormData(); fd.append("video", video); fd.append("options", JSON.stringify(opts));
   const b = document.querySelector('[data-ce="create"]'); if (b) b.disabled = true;
-  try { await api("/api/cinematic/upload", {method:"POST", body:fd}); S.ce.musicUpload = null; toast("Cinematic edit queued.", "ok"); await loadCinematic(); }
+  try { const created = await api("/api/cinematic/upload", {method:"POST", body:fd}); S.ce.musicUpload = null; toast(created.status === "music_required" ? "Music required: choose a confirmed track or Upload music." : "Cinematic edit queued.", created.status === "music_required" ? "bad" : "ok"); await loadCinematic(); }
   catch (e) { toast(e.message, "bad"); }
   finally { if (b) b.disabled = false; }
 }
@@ -6333,10 +6350,17 @@ function loop() {
 
 /* ============================================================ actions */
 document.addEventListener("change", e => {
-  if (e.target.id !== "ce_music_source") return;
-  $("#ce_track_wrap").hidden = e.target.value !== "library";
-  $("#ce_upload_wrap").hidden = e.target.value !== "upload";
-  $("#ce_save_wrap").hidden = e.target.value !== "upload";
+  if (e.target.id === "ce_music_source") {
+    $("#ce_track_wrap").hidden = e.target.value !== "library";
+    $("#ce_upload_wrap").hidden = e.target.value !== "upload";
+    $("#ce_save_wrap").hidden = e.target.value !== "upload";
+    return cePreviewMusic();
+  }
+  if (e.target.id === "ce_focus") {
+    $("#ce_focus_text_wrap").hidden = e.target.value === "auto";
+    return;
+  }
+  if (["ce_track", "ce_atmosphere", "ce_genre", "ce_duration", "ce_offset"].includes(e.target.id)) return cePreviewMusic();
 });
 document.addEventListener("click", async e => {
   const b = e.target.closest("[data-ce]"); if (!b) return;

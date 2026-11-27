@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from . import admin as admins
 from . import campaigns, discover
 from . import account, load, shortcut, updates
-from . import (accounts, ai, alerts, auth, brain, config, creators, ctx, db, jobs, live, media, posting,
+from . import (accounts, ai, alerts, auth, brain, cinematic, config, creators, ctx, db, jobs, live, media, posting,
                profiles, render, safe, templates, transcribe, usage)
 
 from . import tools as _tools  # noqa: E402
@@ -101,6 +101,7 @@ def _startup():
         from . import fetch_model
         threading.Thread(target=lambda: _quiet(fetch_model.ensure), daemon=True).start()
     jobs.start()
+    cinematic.start()
     live.start()
     posting.start()
     updates.note_version(used_before=any(config.USERS_DIR.glob("*/*")))
@@ -135,8 +136,9 @@ class Gate:
             # Only the upload may be big. Everything else is a small form, and is cut off at 256 KB whatever its
             # headers claim, so nobody can fill the server's memory by posting junk (signed in or not).
             piece = method == "PUT" and path.startswith("/api/upload/")
+            cinematic_upload = path in ("/api/cinematic/upload", "/api/music/import", "/api/music/upload")
             cap = ((min(config.MAX_UPLOAD_MB, config.UPLOAD_PART_MB) if piece else config.MAX_UPLOAD_MB) + 8) * 1024 * 1024 \
-                if path == "/api/upload" or piece else 256 * 1024
+                if path == "/api/upload" or cinematic_upload or piece else 256 * 1024
             if method == "POST" and path.endswith("/logo") and path.startswith(("/api/my-campaigns/", "/api/creators/")):
                 cap = 26 * 1024 * 1024          # a campaign's logo: a picture, a GIF or a short video (MAX_LOGO_MB)
             try:
@@ -148,7 +150,7 @@ class Gate:
                         discarded = await receive()
                         if discarded["type"] != "http.request" or not discarded.get("more_body"):
                             break
-                    return await deny(413, f"That file is too big. The limit is {config.MAX_UPLOAD_MB} MB." if path == "/api/upload"
+                    return await deny(413, f"That file is too big. The limit is {config.MAX_UPLOAD_MB} MB." if path in ("/api/upload", "/api/cinematic/upload", "/api/music/import", "/api/music/upload")
                                       else "That logo is too big. The limit is 25 MB." if path.endswith("/logo") else "That request is too large.")
             except ValueError:
                 return await deny(400, "Bad request.")
@@ -578,6 +580,8 @@ def admin_page(request: Request, rest: str = ""):
 def _nothing_running() -> bool:
     """No recording, video, clip or upload in progress: a safe moment to restart for an update."""
     if live.active():
+        return False
+    if cinematic.any_running():
         return False
     for j in jobs.all_jobs():
         if j["status"] in ("queued", "running") or any(k.get("status") in ("queued", "rendering") for k in j.get("clips", [])):
@@ -1468,6 +1472,29 @@ def delete_my_account(request: Request, body: dict = Body(...)):
     return resp
 
 
+@app.get("/media/music/{tid}")
+def music_media(tid: str):
+    try:
+        path = cinematic.music_path(tid)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(404, "Track not found.")
+    media_types = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4", ".flac": "audio/flac", ".ogg": "audio/ogg"}
+    return FileResponse(path, media_type=media_types.get(path.suffix.lower(), "application/octet-stream"), headers={"Cache-Control": "private, max-age=300"})
+
+
+@app.get("/media/cinematic/{jid}/{name}")
+def cinematic_media(jid: str, name: str):
+    if not re.fullmatch(r"(?:result\.mp4|edit-plan\.json|music-analysis\.json|scene-analysis\.json|license\.json|metrics\.json)", name):
+        raise HTTPException(404)
+    job = _cinematic_or_404(jid)
+    path = Path(job["dir"]) / name
+    if not path.is_file():
+        raise HTTPException(404)
+    return FileResponse(path, filename=name if name == "result.mp4" else None,
+                        media_type="video/mp4" if name == "result.mp4" else "application/json",
+                        headers={"Cache-Control": "private, max-age=300"})
+
+
 @app.get("/media/{jid}/{name}")
 def media_file(jid: str, name: str, download: int = 0):
     if not re.fullmatch(r"[\w\-]+\.(mp4|jpg)", name):
@@ -1483,6 +1510,142 @@ def media_file(jid: str, name: str, download: int = 0):
         if clip:
             save_as = account.clip_title_name(clip, Path(name).stem) + ".mp4"
     return FileResponse(f, filename=save_as if download else None, headers={"Cache-Control": "private, max-age=300"})
+
+
+# ================================================================ cinematic edit and local music
+def _cinematic_upload(file: UploadFile, allowed: set[str]) -> Path:
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in allowed:
+        raise HTTPException(400, "That file type is not supported here.")
+    root = config.TMP_DIR / "cinematic-incoming"
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / (os.urandom(10).hex() + ext)
+    try:
+        with path.open("wb") as out:
+            while chunk := file.file.read(4 * 1024 * 1024):
+                out.write(chunk)
+        return path
+    except OSError:
+        path.unlink(missing_ok=True)
+        raise HTTPException(507, "PeakCut could not save this file.")
+
+
+@app.get("/api/music")
+def music_library(q: str = "", genre: str = "", mood: str = "", favorite: int = 0, min_bpm: float | None = None,
+                  max_bpm: float | None = None, min_duration: float | None = None, max_duration: float | None = None):
+    try:
+        tracks = cinematic.list_music({"q": q[:120], "genre": genre[:40], "mood": mood[:40], "favorite": True if favorite else None,
+                                       "min_bpm": min_bpm, "max_bpm": max_bpm, "min_duration": min_duration, "max_duration": max_duration})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"tracks": tracks,
+            "categories": sorted({x for t in cinematic.list_music() for x in (t.get("genres") or [])})}
+
+
+@app.post("/api/music/import")
+def music_import(file: UploadFile = File(...), title: str = Form(""), artist: str = Form(""), genres: str = Form(""), moods: str = Form(""),
+                 source_url: str = Form(""), license_type: str = Form(""), license_url: str = Form(""), license_text: str = Form(""),
+                 attribution: str = Form(""), allowed_platforms: str = Form(""), license_confirmed: str = Form("false"),
+                 content_id_status: str = Form("unknown")):
+    path = _cinematic_upload(file, cinematic.MUSIC_EXTS)
+    try:
+        return cinematic.import_music(path, {"title": title, "artist": artist, "genres": genres, "moods": moods,
+                                             "source_url": source_url, "license_type": license_type, "license_url": license_url,
+                                             "license_text": license_text, "attribution": attribution,
+                                             "allowed_platforms": allowed_platforms, "license_confirmed": license_confirmed.lower() == "true",
+                                             "content_id_status": content_id_status})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    finally:
+        path.unlink(missing_ok=True)
+
+
+@app.post("/api/music/upload")
+def music_upload(file: UploadFile = File(...)):
+    path = _cinematic_upload(file, cinematic.MUSIC_EXTS)
+    try:
+        return cinematic.temp_music(path)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    finally:
+        path.unlink(missing_ok=True)
+
+
+@app.put("/api/music/{tid}")
+def music_edit(tid: str, body: dict = Body(...)):
+    try:
+        return cinematic.update_music(tid, body)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/music/{tid}/analyze")
+def music_analyze(tid: str):
+    try:
+        return cinematic.reanalyze_music(tid)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/music/{tid}")
+def music_drop(tid: str, body: dict = Body(...)):
+    try:
+        return cinematic.delete_music(tid, bool(body.get("confirm")))
+    except PermissionError as e:
+        raise HTTPException(409, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.get("/api/cinematic/jobs")
+def cinematic_jobs():
+    return cinematic.list_jobs(ctx.uid())
+
+
+@app.post("/api/cinematic/upload")
+def cinematic_upload_video(video: UploadFile = File(...), options: str = Form("{}")):
+    path = _cinematic_upload(video, cinematic.VIDEO_EXTS)
+    try:
+        try:
+            raw = json.loads(options)
+        except ValueError:
+            raw = {}
+        return cinematic.create_job(ctx.uid(), path, video.filename or "source.mp4", raw if isinstance(raw, dict) else {})
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _cinematic_or_404(jid: str):
+    job = cinematic.get_job(ctx.uid(), jid)
+    if not job:
+        raise HTTPException(404, "No such cinematic edit.")
+    return job
+
+
+@app.post("/api/cinematic/jobs/{jid}/cancel")
+def cinematic_cancel(jid: str):
+    try:
+        return cinematic.cancel_job(ctx.uid(), jid)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.post("/api/cinematic/jobs/{jid}/render")
+def cinematic_render_again(jid: str):
+    try:
+        return cinematic.rerender(ctx.uid(), jid)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
 
 
 # ================================================================ creators and live recording

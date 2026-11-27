@@ -2236,6 +2236,15 @@ textarea.cpg-in{height:auto;padding:8px 12px;resize:vertical}.cpg-in:focus{borde
 .tp9-cam.styled::before{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:var(--cb,none);z-index:1;pointer-events:none}
 /* the cam's picture fills its box a hair past the edge, so no gap shows between it and a rounded edge or border */
 .tp9-cam.real video,.tp9-cam.real img{inset:-2%;width:104%;height:104%}
+.cin-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(280px,.9fr);gap:18px;align-items:start}
+.cin-form .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.cin-form .fields .wide{grid-column:1/-1}
+.cin-form label,.cin-lib label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--dim)}
+.cin-form select,.cin-form input[type=number],.cin-form input[type=text]{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--text);font:inherit}
+.cin-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px}.cin-checks label{flex-direction:row;align-items:center;color:var(--text);font-size:13px}.cin-checks input{accent-color:var(--brand)}
+.cin-note{font-size:12px;color:var(--dim);line-height:1.45}.cin-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.cin-lib .cin-track{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 10px;padding:12px 0;border-bottom:1px solid var(--line)}
+.cin-track small{color:var(--dim)}.cin-track audio{width:100%;height:30px;grid-column:1/-1}.cin-jobs{display:grid;gap:12px}.cin-job video{width:180px;max-width:100%;aspect-ratio:9/16;background:#1f1713;object-fit:contain}.cin-job{display:grid;grid-template-columns:180px minmax(0,1fr);gap:14px}.cin-job .bar{height:7px;background:var(--muted);border-radius:9px;overflow:hidden;margin:10px 0}.cin-job .bar i{display:block;height:100%;background:var(--brand)}
+@media (max-width:800px){.cin-grid{grid-template-columns:1fr}.cin-job{grid-template-columns:1fr}.cin-job video{width:150px}.cin-form .fields,.cin-checks{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -2510,7 +2519,8 @@ function startTour() {
 
 /* ============================================================ state */
 const S = {status:{styles:{}, layouts:{}}, jobs:[], creators:[], accounts:[], overview:null, settings:null,
-           view:"overview", ctab:"clips"};
+           view:"overview", ctab:"clips", ce:{jobs:[], tracks:[], categories:[], source:null, musicUpload:null, loading:false,
+           filters:{q:"", genre:"", mood:"", min_bpm:"", max_bpm:"", min_duration:"", max_duration:""}}};
 const D = {jid:null, cid:null, sig:""};
 const creatorId = () => S.view.startsWith("c:") ? S.view.slice(2) : null;
 const creator = () => S.creators.find(c => c.id === creatorId());
@@ -2800,6 +2810,7 @@ function drawShell() {  const nav = (v, icon, label, extra = "") => `<button cla
       const tip = [making && `${making} video${making > 1 ? "s" : ""} being made`, rec && `${rec} stream${rec > 1 ? "s" : ""} recording`,
                    redo && `clips being made again in ${redo} video${redo > 1 ? "s" : ""}`].filter(Boolean).join(", ");
       return w ? `<span class="working" title="${tip}"><i></i>${w} working</span>` : S.jobs.length ? `<span class="count">${S.jobs.length}</span>` : ""; })()) +
+    nav("cinematic", navIc("film", "cinematic"), "Cinematic Edit", S.ce.jobs.some(j => ["queued", "running"].includes(j.status)) ? `<span class="working" title="Cinematic edit in progress"><i></i></span>` : "") +
     nav("discover", navIc("radio", "discover"), "Streamers", S.creators.length ? `<span class="count" title="Your streamers">${S.creators.length}</span>` : "") +
     nav("campaigns", navIc("money", "campaigns"), "Campaigns", S.mc.list.length ? `<span class="count" title="Your campaigns">${S.mc.list.length}</span>` : "") +
     (postSoon() ? "" : nav("schedule", navIc("cal", "schedule"), "Schedule", schDot())) +
@@ -2819,13 +2830,14 @@ function drawShell() {  const nav = (v, icon, label, extra = "") => `<button cla
       <button class="icon-btn bell" data-act="bell" title="Notifications" aria-label="Notifications${S.status.unread ? `, ${S.status.unread} new` : ""}" aria-haspopup="dialog">${ic("bell")}${S.status.unread ? `<span class="dotn">${S.status.unread > 9 ? "9+" : S.status.unread}</span>` : ""}</button></div>` : ""));
   const c = creator();
   const recording = S.creators.filter(x => x.live_job).length;
-  let title = {overview:"Home", library:"All videos", settings:"Settings", styles:"Styles", usage:"AI", discover:"Streamers", campaigns:"Campaigns", schedule:"Schedule", updates:"What's new"}[S.view] || "", sub = "", act = "";
+  let title = {overview:"Home", library:"All videos", cinematic:"Cinematic Edit", settings:"Settings", styles:"Styles", usage:"AI", discover:"Streamers", campaigns:"Campaigns", schedule:"Schedule", updates:"What's new"}[S.view] || "", sub = "", act = "";
   if (S.view === "usage") sub = "Your AI service and key, and what the AI has been used for.";
   if (S.view === "campaigns") sub = "Brands pay you per view.";
   if (S.view === "discover") sub = "Clipped live, 24/7.";
   if (S.view === "schedule") sub = "When your clips go out.";
   if (S.view === "overview") sub = `${greeting()}. ${S.creators.length} streamer${S.creators.length === 1 ? "" : "s"}${recording ? `, ${recording} recording now` : ""}.`;
   if (S.view === "library") sub = "Every video and recording.";
+  if (S.view === "cinematic") sub = "Create a vertical music edit from your local video and licensed music library.";
   if (S.view === "settings") sub = (S.status.accounts === false ? "Your AI key, apps and storage." : "Profile, security, apps and AI.");
   if (S.view === "styles") sub = "How your clips look.";
   let pic = "", subHtml = null, tabs = "";
@@ -3488,7 +3500,102 @@ document.addEventListener("change", async e => {
   catch (err) { toast(err.message, "bad"); } finally { b.disabled = false; $(".pv", p).textContent = "Add to a creator"; }
 });
 
-const ROUTES = {overview: "", library: "videos", settings: "settings", usage: "ai", styles: "styles", discover: "live", campaigns: "campaigns", schedule: "schedule", updates: "updates"};
+function ceTrackLabel(t) { return `${t.title || t.file_name || "Untitled"}${t.artist ? ` · ${t.artist}` : ""}${t.license?.status !== "confirmed" ? " · licence unknown" : ""}`; }
+function drawCinematic() {
+  const box = $("#cinematic"); if (!box) return;
+  const ce = S.ce, tracks = ce.tracks || [], filters = ce.filters || {};
+  const source = $("#ce_music_source")?.value || "auto";
+  const query = $("#ce_lib_query")?.value || filters.q || "";
+  const trackOptions = tracks.map(t => `<option value="${esc(t.id)}">${esc(ceTrackLabel(t))}</option>`).join("");
+  box.innerHTML = `<div class="cin-grid">
+    <section class="card cin-form"><h2>Cinematic Edit</h2><p class="cin-note">Upload one MP4, MKV or MOV. PeakCut keeps the source, detects scenes locally and writes a repeatable edit plan.</p>
+      <div class="fields">
+        <label class="wide">Source video<input id="ce_video" type="file" accept="video/mp4,video/quicktime,video/x-matroska,.mp4,.mov,.mkv"></label>
+        <label>Music source<select id="ce_music_source"><option value="auto">Auto — confirmed local library only</option><option value="library">Library — choose a track</option><option value="upload">Upload — use this file for this edit</option><option value="original_audio">Original Audio — no music</option></select></label>
+        <label>Atmosphere<select id="ce_atmosphere"><option value="dramatic">Dramatic</option><option value="dark_cinematic">Dark Cinematic</option><option value="emotional">Emotional</option><option value="epic">Epic</option><option value="natural_film">Natural Film</option><option value="phonk">Phonk</option></select></label>
+        <label>Music genre<select id="ce_genre"><option value="">Auto by atmosphere</option><option>cinematic</option><option>epic</option><option>dramatic</option><option>dark</option><option>emotional</option><option>ambient</option><option>action</option><option>phonk</option></select></label>
+        <label id="ce_track_wrap">Music track<select id="ce_track">${trackOptions || `<option value="">Library is empty</option>`}</select></label>
+        <label id="ce_upload_wrap" hidden>Music file<input id="ce_music_file" type="file" accept="audio/mpeg,audio/wav,audio/mp4,audio/flac,audio/ogg,.mp3,.wav,.m4a,.flac,.ogg"><span class="cin-note">Upload is used only for this edit unless saved below.</span></label><label id="ce_save_wrap" hidden style="flex-direction:row;align-items:center;color:var(--text)"><input id="ce_save_upload" type="checkbox"> Also save this upload in Music Library</label>
+        <label>Duration<select id="ce_duration"><option>15</option><option selected>30</option><option>45</option><option>60</option></select></label>
+        <label>Effects intensity<select id="ce_intensity"><option value="light">Light</option><option value="medium" selected>Medium</option><option value="strong">Strong</option></select></label>
+        <label>Music start offset<input id="ce_offset" type="number" min="0" step="0.1" value="0"> seconds</label>
+      </div>
+      <div class="cin-checks">
+        <label><input id="ce_beat" type="checkbox" checked> Beat Sync</label><label><input id="ce_zoom" type="checkbox" checked> Dynamic Zoom</label>
+        <label><input id="ce_grade" type="checkbox" checked> Cinematic Color Grading</label><label><input id="ce_reframe" type="checkbox" checked> Smart Reframe</label>
+        <label><input id="ce_trans" type="checkbox" checked> Smooth Transitions</label><label><input id="ce_speed" type="checkbox"> Speed Ramp</label>
+        <label><input id="ce_dialogue" type="checkbox"> Keep Original Dialogue</label><label><input id="ce_duck" type="checkbox" checked> Audio Ducking</label>
+      </div>
+      <p class="cin-note" style="margin-top:14px">Auto selection never uses an unconfirmed track or downloads music. If none is eligible, the edit uses Original Audio and records the reason.</p>
+      <div class="cin-actions"><button type="button" class="btn primary" data-ce="create">Create Cinematic Edit</button><button type="button" class="btn" data-ce="refresh">Refresh</button></div>
+    </section>
+    <section class="card cin-lib"><h2>Music Library</h2><p class="cin-note">Local only · <a href="https://studio.youtube.com/" target="_blank" rel="noopener">YouTube Audio Library</a> · <a href="https://pixabay.com/music/" target="_blank" rel="noopener">Pixabay Music</a>. A catalogue listing is not proof of commercial rights.</p>
+      <div class="fields"><label>Search library<input id="ce_lib_query" type="search" value="${esc(query)}" placeholder="Title, artist or source URL"></label><label>Genre filter<input id="ce_lib_genre" value="${esc(filters.genre || "")}" placeholder="cinematic"></label><label>Mood filter<input id="ce_lib_mood" value="${esc(filters.mood || "")}" placeholder="dramatic"></label><label>Min BPM<input id="ce_lib_min_bpm" type="number" min="0" value="${esc(filters.min_bpm || "")}"></label><label>Max BPM<input id="ce_lib_max_bpm" type="number" min="0" value="${esc(filters.max_bpm || "")}"></label><label>Min seconds<input id="ce_lib_min_duration" type="number" min="0" value="${esc(filters.min_duration || "")}"></label><label>Max seconds<input id="ce_lib_max_duration" type="number" min="0" value="${esc(filters.max_duration || "")}"></label><button type="button" class="btn sm" data-ce="search">Filter library</button></div>
+      <label>Import permitted composition<input id="ce_lib_file" type="file" accept="audio/mpeg,audio/wav,audio/mp4,audio/flac,audio/ogg,.mp3,.wav,.m4a,.flac,.ogg"></label>
+      <div class="fields" style="margin-top:10px"><label>Genres<input id="ce_lib_genres" type="text" placeholder="cinematic, orchestral"></label><label>Moods<input id="ce_lib_moods" type="text" placeholder="dramatic"></label><label>Source URL<input id="ce_lib_source" type="text" placeholder="Official source page"></label><label>License URL<input id="ce_lib_license" type="text" placeholder="License page"></label><label>License type<input id="ce_lib_type" type="text" placeholder="Only if verified"></label><label>Attribution<input id="ce_lib_attribution" type="text" placeholder="Required attribution, if any"></label><label>Allowed platforms<input id="ce_lib_platforms" type="text" placeholder="youtube, instagram"></label><label>Content ID<select id="ce_lib_content_id"><option value="unknown">Unknown</option><option value="known">Known</option><option value="registered">Registered</option></select></label></div>
+      <label style="margin-top:10px;flex-direction:row;align-items:center;color:var(--text)"><input id="ce_lib_confirm" type="checkbox"> I confirmed this track's permission for the intended use</label>
+      <button type="button" class="btn sm" data-ce="import">Import and analyze</button>
+      <div style="margin-top:12px">${tracks.length ? tracks.map(t => `<div class="cin-track"><div><b>${esc(t.title || t.file_name)}</b><br><small>${esc(t.artist || "Unknown artist")} · ${t.duration ? fmt(t.duration) : "duration unknown"} · ${t.analysis?.bpm_estimate ? `${t.analysis.bpm_estimate} BPM` : "BPM fallback"}</small><br><small>${t.license?.status === "confirmed" ? "Permission confirmed by user" : "Licence unknown — excluded from Auto"}</small></div><div class="row"><button type="button" class="btn sm" data-ce="fav" data-id="${esc(t.id)}">${t.favorite ? "Unfavorite" : "Favorite"}</button><button type="button" class="btn sm ghost" data-ce="edit-track" data-id="${esc(t.id)}">Edit tags</button><button type="button" class="btn sm ghost" data-ce="reanalyze" data-id="${esc(t.id)}">Analyze</button><button type="button" class="btn sm danger" data-ce="delete-track" data-id="${esc(t.id)}">Delete</button></div><audio controls preload="none" src="/media/music/${esc(t.id)}"></audio></div>`).join("") : `<p class="cin-note">No tracks yet. Import one permitted local composition to enable Auto selection.</p>`}</div>
+    </section>
+  </div><section class="card" style="margin-top:18px"><h2>Your Cinematic Edits</h2><div class="cin-jobs" id="ce_jobs">${ce.jobs.length ? ce.jobs.map(ceJobHtml).join("") : `<p class="cin-note">No cinematic edits yet.</p>`}</div></section>`;
+  $("#ce_music_source").value = source;
+  $("#ce_genre").value = "";
+  $("#ce_lib_query").value = query;
+  $("#ce_track_wrap").hidden = source !== "library";
+  $("#ce_upload_wrap").hidden = source !== "upload";
+  $("#ce_save_wrap").hidden = source !== "upload";
+}
+function ceJobHtml(j) {
+  const done = j.status === "done", running = ["queued", "running"].includes(j.status), pct = Math.round((j.progress || 0) * 100);
+  const files = j.files || {};
+  return `<article class="cin-job"><div>${done && files.video ? `<video controls preload="metadata" src="${esc(files.video)}"></video>` : `<div class="empty" style="min-height:220px;display:grid;place-items:center">${esc(j.stage || j.status)}</div>`}</div><div><h3>${esc(j.source?.name || "Cinematic edit")}</h3><p class="cin-note">${esc(j.stage || j.status)} · ${pct}%${j.selection_reason ? `<br>${esc(j.selection_reason)}` : ""}</p>${running ? `<div class="bar"><i style="width:${pct}%"></i></div><button type="button" class="btn sm danger" data-ce="cancel" data-id="${esc(j.id)}">Cancel</button>` : ""}${j.status === "error" ? `<p class="bad">${esc(j.error || "The edit stopped.")}</p>` : ""}${j.warnings?.length ? `<p class="cin-note">${j.warnings.map(esc).join("<br>")}</p>` : ""}<div class="cin-actions">${done && files.video ? `<a class="btn sm primary" href="${esc(files.video)}?download=1">Download MP4</a><a class="btn sm" href="${esc(files.plan)}" target="_blank" rel="noopener">edit-plan.json</a><a class="btn sm" href="${esc(files.music_analysis)}" target="_blank" rel="noopener">music-analysis.json</a><a class="btn sm" href="${esc(files.scenes)}" target="_blank" rel="noopener">Scene analysis</a><button type="button" class="btn sm" data-ce="rerender" data-id="${esc(j.id)}">Render again</button>` : ""}</div></div></article>`;
+}
+async function loadCinematic() {
+  const v = id => $(id)?.value || "";
+  S.ce.filters = {q:v("#ce_lib_query"), genre:v("#ce_lib_genre"), mood:v("#ce_lib_mood"), min_bpm:v("#ce_lib_min_bpm"), max_bpm:v("#ce_lib_max_bpm"), min_duration:v("#ce_lib_min_duration"), max_duration:v("#ce_lib_max_duration")};
+  const p = new URLSearchParams(Object.entries(S.ce.filters).filter(([,x]) => x !== ""));
+  try { const [tracks, jobs] = await Promise.all([api("/api/music?" + p.toString()), api("/api/cinematic/jobs")]); S.ce.tracks = tracks.tracks || []; S.ce.categories = tracks.categories || []; S.ce.jobs = jobs || []; drawCinematic(); }
+  catch (e) { if (S.view === "cinematic") toast(e.message, "bad"); }
+}
+function ceFormOptions() {
+  const val = id => $(id)?.value;
+  return {music_source: val("#ce_music_source"), music_track_id: val("#ce_track"), music_upload_id: S.ce.musicUpload?.id || "", music_genre: val("#ce_genre"), atmosphere: val("#ce_atmosphere"),
+    duration: Number(val("#ce_duration")), effects_intensity: val("#ce_intensity"), music_start_offset: Number(val("#ce_offset") || 0),
+    beat_sync: $("#ce_beat")?.checked, dynamic_zoom: $("#ce_zoom")?.checked, color_grading: $("#ce_grade")?.checked,
+    smart_reframe: $("#ce_reframe")?.checked, smooth_transitions: $("#ce_trans")?.checked, speed_ramp: $("#ce_speed")?.checked,
+    keep_original_dialogue: $("#ce_dialogue")?.checked, audio_ducking: $("#ce_duck")?.checked};
+}
+async function ceCreate() {
+  const video = $("#ce_video")?.files?.[0]; if (!video) return toast("Choose a source video first.", "bad");
+  const opts = ceFormOptions();
+  if (opts.music_source === "library" && !opts.music_track_id) return toast("Choose a library track or use Auto/Original Audio.", "bad");
+  if (opts.music_source === "upload" && !S.ce.musicUpload) {
+    const file = $("#ce_music_file")?.files?.[0]; if (!file) return toast("Choose a music file for Upload source.", "bad");
+    const fd = new FormData(); fd.append("file", file); S.ce.musicUpload = await api("/api/music/upload", {method:"POST", body:fd});
+    opts.music_upload_id = S.ce.musicUpload.id;
+    if ($("#ce_save_upload")?.checked) {
+      const save = new FormData(); save.append("file", file); save.append("title", file.name.replace(/\.[^.]+$/, "")); save.append("genres", opts.music_genre || "");
+      await api("/api/music/import", {method:"POST", body:save});
+    }
+  }
+  const fd = new FormData(); fd.append("video", video); fd.append("options", JSON.stringify(opts));
+  const b = document.querySelector('[data-ce="create"]'); if (b) b.disabled = true;
+  try { await api("/api/cinematic/upload", {method:"POST", body:fd}); S.ce.musicUpload = null; toast("Cinematic edit queued.", "ok"); await loadCinematic(); }
+  catch (e) { toast(e.message, "bad"); }
+  finally { if (b) b.disabled = false; }
+}
+async function ceImport() {
+  const file = $("#ce_lib_file")?.files?.[0]; if (!file) return toast("Choose an audio file to import.", "bad");
+  const fd = new FormData(); fd.append("file", file); fd.append("title", file.name.replace(/\.[^.]+$/, "")); fd.append("genres", $("#ce_lib_genres")?.value || ""); fd.append("moods", $("#ce_lib_moods")?.value || ""); fd.append("source_url", $("#ce_lib_source")?.value || ""); fd.append("license_url", $("#ce_lib_license")?.value || ""); fd.append("license_type", $("#ce_lib_type")?.value || ""); fd.append("attribution", $("#ce_lib_attribution")?.value || ""); fd.append("allowed_platforms", $("#ce_lib_platforms")?.value || ""); fd.append("content_id_status", $("#ce_lib_content_id")?.value || "unknown"); fd.append("license_confirmed", String($("#ce_lib_confirm")?.checked));
+  try { await api("/api/music/import", {method:"POST", body:fd}); toast("Track imported and analyzed.", "ok"); await loadCinematic(); }
+  catch (e) { toast(e.message, "bad"); }
+}
+async function refreshCinematicJobs() {
+  if (S.view !== "cinematic" || !$("#ce_jobs")) return;
+  try { S.ce.jobs = await api("/api/cinematic/jobs"); $("#ce_jobs").innerHTML = S.ce.jobs.length ? S.ce.jobs.map(ceJobHtml).join("") : `<p class="cin-note">No cinematic edits yet.</p>`; }
+  catch {}
+}
+const ROUTES = {overview: "", library: "videos", cinematic: "cinematic", settings: "settings", usage: "ai", styles: "styles", discover: "live", campaigns: "campaigns", schedule: "schedule", updates: "updates"};
 function pathFor(v, tab) {
   if (v.startsWith("c:")) return `/app/creators/${encodeURIComponent(v.slice(2))}${tab && tab !== "clips" ? "/" + tab : ""}`;
   if (v === "settings") return "/app/settings" + (tab ? "/" + tab : "");
@@ -3537,6 +3644,7 @@ function go(v, tab, fromHistory) {
       <p>Paste a link or drop in videos. You get captioned shorts back.</p><div id="add"></div></section>` : "";
   if (v === "overview") { view.innerHTML = `<div id="homeLive"></div><div id="homeCamps"></div><div id="ov"></div>`; drawHomeLive(); loadHomeLive(); drawHomeCamps(); if (!S.cp.rows || Date.now() - (S.cp.at || 0) > 600000) loadCampaigns(); }
   else if (v === "library") view.innerHTML = `<div id="add"></div><div id="jobs"></div>`;
+  else if (v === "cinematic") { view.innerHTML = `<div id="cinematic"></div>`; drawCinematic(); loadCinematic(); }
   else if (v === "settings") view.innerHTML = `<div id="sform"></div>`;
   else if (v === "usage") { view.innerHTML = `<div id="aikey"></div><div id="usage"></div>`; drawAiKey(); loadUsage(); }
   else if (v === "styles") view.innerHTML = `<div class="sty-page" id="setbody"><div class="set-load">Loading…</div></div>`;
@@ -6223,6 +6331,35 @@ function loop() {
 }
 
 /* ============================================================ actions */
+document.addEventListener("change", e => {
+  if (e.target.id !== "ce_music_source") return;
+  $("#ce_track_wrap").hidden = e.target.value !== "library";
+  $("#ce_upload_wrap").hidden = e.target.value !== "upload";
+  $("#ce_save_wrap").hidden = e.target.value !== "upload";
+});
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-ce]"); if (!b) return;
+  const a = b.dataset.ce, id = b.dataset.id;
+  try {
+    if (a === "create") return ceCreate();
+    if (a === "import") return ceImport();
+    if (a === "refresh") return loadCinematic();
+    if (a === "search") return loadCinematic();
+    if (a === "cancel") { await send(`/api/cinematic/jobs/${encodeURIComponent(id)}/cancel`, {}); toast("Cancellation requested.", "ok"); return refreshCinematicJobs(); }
+    if (a === "rerender") { await send(`/api/cinematic/jobs/${encodeURIComponent(id)}/render`, {}); toast("Rendering the saved plan again.", "ok"); return refreshCinematicJobs(); }
+    const track = S.ce.tracks.find(x => x.id === id);
+    if (a === "fav" && track) { await send(`/api/music/${encodeURIComponent(id)}`, {favorite: !track.favorite}, "PUT"); return loadCinematic(); }
+    if (a === "reanalyze") { await send(`/api/music/${encodeURIComponent(id)}/analyze`, {}); toast("Track analysis refreshed.", "ok"); return loadCinematic(); }
+    if (a === "edit-track" && track) {
+      const genres = window.prompt("Genres, comma-separated", (track.genres || []).join(", "));
+      if (genres === null) return;
+      const moods = window.prompt("Moods, comma-separated", (track.moods || []).join(", "));
+      if (moods === null) return;
+      await send(`/api/music/${encodeURIComponent(id)}`, {genres, moods}, "PUT"); toast("Track tags updated.", "ok"); return loadCinematic();
+    }
+    if (a === "delete-track") { if (!await ask("Delete composition?", "A track used by a saved cinematic edit cannot be removed. Confirm only if you no longer need this local file.", "Delete", true)) return; await api(`/api/music/${encodeURIComponent(id)}`, {method:"DELETE", headers:{"Content-Type":"application/json"}, body:JSON.stringify({confirm:true})}); toast("Track deleted.", "ok"); return loadCinematic(); }
+  } catch (err) { toast(err.message, "bad"); }
+});
 document.addEventListener("submit", e => { if (e.target.id === "addform") { e.preventDefault(); makeClips(); } });
 $("#file").addEventListener("change", e => { attach(e.target.files); e.target.value = ""; });
 document.addEventListener("dragover", e => { const a = $(".composer"); if (a) { e.preventDefault(); a.classList.add("over"); } });
@@ -6855,6 +6992,7 @@ $("#main").addEventListener("scroll", () => $(".topbar").classList.toggle("stuck
   Promise.all([loadMyCamps(), loadTpls()]).then(() => { drawShell(); drawCampBar(); if (S.view === "campaigns") drawCampView(); if (creator() && S.ctab === "campaign") drawCreatorForm(); if ($("#add")) drawAdd(S.view === "overview" ? "hero" : "compact"); });
   setInterval(async () => { try { S.status = await api("/api/status"); drawShell(); if (S.view === "overview") drawOverview(); checkNew(); checkRelease(); } catch {} }, 15000);
   setInterval(() => { if (S.view === "schedule" && !document.hidden && !$("#formdlg").open && !$("#schdlg").open) loadSchedule(); }, 30000);   // posts going out, views coming in
+  setInterval(() => { if (S.view === "cinematic" && !document.hidden) refreshCinematicJobs(); }, 2000);
   if (S.view !== "overview" && S.view !== "discover") Promise.all([loadFamous(), loadLive()]).then(drawShell);
   setInterval(() => { if (!document.hidden && S.view !== "overview" && S.view !== "discover") Promise.all([loadFamous(), loadLive()]).then(drawShell); }, 180000);
 })();

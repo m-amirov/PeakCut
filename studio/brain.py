@@ -694,6 +694,89 @@ SIG_SCHEMA = {
 }
 
 
+# ---------------------------------------------------------------- experimental viewer review
+# This judge is deliberately not wired into either recorded or live selection.  It is
+# used to make a comparable, reviewable research record before changing production
+# behaviour.
+VIEWER_WEIGHTS = {
+    "humor_score": 0.30, "surprise_score": 0.20, "payoff_score": 0.15,
+    "shareability_score": 0.15, "clarity_score": 0.10, "retention_score": 0.10,
+}
+VIEWER_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "humor_score": {"type": "NUMBER"}, "surprise_score": {"type": "NUMBER"},
+        "payoff_score": {"type": "NUMBER"}, "shareability_score": {"type": "NUMBER"},
+        "clarity_score": {"type": "NUMBER"}, "retention_score": {"type": "NUMBER"},
+        "setup_timestamp": {"type": "NUMBER"}, "payoff_timestamp": {"type": "NUMBER"},
+        "memorable_quote": {"type": "STRING"}, "humor_type": {"type": "STRING"},
+        "reason": {"type": "STRING"}, "rejection_reason": {"type": "STRING"},
+        "confidence": {"type": "NUMBER"},
+    },
+    "required": ["humor_score", "surprise_score", "payoff_score", "shareability_score", "clarity_score",
+                 "retention_score", "setup_timestamp", "payoff_timestamp", "memorable_quote", "humor_type",
+                 "reason", "rejection_reason", "confidence"],
+}
+VIEWER_PROMPT = """You are an independent short-video viewer, not the system that selected this candidate.
+Judge whether this one self-contained excerpt is worth watching, rewatching, or sending to a friend. Do not infer a
+joke, reaction, facial expression, event, or punchline that is not supported by the supplied transcript, context, or
+optional frames. Profanity, shouting, conflict, and topic coherence are not automatically entertaining.
+
+Profile: {profile}
+{profile_note}
+Excerpt starts at {start:.1f}s and ends at {end:.1f}s in its source. Timestamped transcript:
+{transcript}
+
+Context before/after the excerpt:
+{context}
+
+Available aggregate audio/chat signals (they are evidence, not a verdict):
+{signals}
+
+Optional visual frames are supplied in the order of these source timestamps:
+{frame_timestamps}
+
+Score each numeric criterion from 0 to 100. `setup_timestamp` and `payoff_timestamp` must be source timestamps
+inside the excerpt, or 0 when absent. Use an empty memorable_quote and a concrete rejection_reason when the excerpt
+does not earn a recommendation. `humor_type` may be "none". Return only the requested JSON."""
+
+
+def viewer_judge(words, start, end, context="", signals=None, profile="balanced", images=None, frame_timestamps=(), timeout=None,
+                 audit=None):
+    """Experimental independent viewer score for one already-proposed excerpt.
+
+    The original selector score is intentionally absent from the prompt.  Callers retain it beside this result for
+    comparison; this helper never selects, renders, or queues a clip.
+    """
+    profile = str(profile or "balanced").strip().lower()
+    if profile not in ("balanced", "meme_comedy"):
+        raise ValueError("Unknown viewer profile")
+    excerpt = [w for w in words if start - 0.2 <= _num(w.get("s"), -1) <= end + 0.2]
+    if not excerpt:
+        raise ValueError("The viewer judge needs a transcript for the excerpt")
+    note = ("Give humor, absurdity, comic timing, wit, cringe, irony and authentic reactions priority; a normal "
+            "coherent discussion is weak without a payoff." if profile == "meme_comedy" else
+            "Use the same standards for humor, drama, gaming and conversation; do not favor one genre by default.")
+    prompt = VIEWER_PROMPT.format(profile=profile, profile_note=note, start=start, end=end,
+                                  transcript=_fmt(make_lines(excerpt)), context=_safe(context, 2500) or "Not available.",
+                                  signals=_safe(json.dumps(signals or {}, ensure_ascii=False), 800) or "Not available.",
+                                  frame_timestamps=", ".join(f"{float(t):.1f}s" for t in frame_timestamps) if images else "None.")
+    began = time.monotonic()
+    out, model, spent = ask_ai(prompt, VIEWER_SCHEMA, purpose="Research: viewer judge", timeout=timeout,
+                               temperature=0.0, images=images, audit=audit)
+    answer = _first(out) or out
+    if not isinstance(answer, dict):
+        raise RuntimeError("Viewer judge returned no structured result")
+    result = {key: round(max(0.0, min(100.0, _num(answer.get(key)))), 2) for key in VIEWER_WEIGHTS}
+    result["viewer_score"] = round(sum(result[key] * weight for key, weight in VIEWER_WEIGHTS.items()), 2)
+    result.update({key: _text(answer.get(key, ""), 300) for key in ("memorable_quote", "humor_type", "reason", "rejection_reason")})
+    result["setup_timestamp"] = round(max(0.0, min(float(end), _num(answer.get("setup_timestamp")))), 2)
+    result["payoff_timestamp"] = round(max(0.0, min(float(end), _num(answer.get("payoff_timestamp")))), 2)
+    result["confidence"] = round(max(0.0, min(100.0, _num(answer.get("confidence")))), 2)
+    result["profile"], result["model"], result["tokens"], result["latency_ms"] = profile, model, spent, round((time.monotonic() - began) * 1000)
+    return result
+
+
 def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_len=60, existing=(), n=2, must=False,
                      game=None, timeout=None, focus="", lang="", audit=None):
     """Judge 1: words only. Returns (clips, tokens)."""

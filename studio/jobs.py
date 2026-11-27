@@ -111,16 +111,58 @@ on_clip_ready: list = []   # callbacks (job, clip), run once when a clip first f
 DEFAULTS = {"max_clips": 6, "min_len": 15, "max_len": 60, "style": "bounce", "layout": "blur", "quality": 720,
             "range_start": None, "range_end": None, "captions": True, "hook_text": "", "description_text": "",
             "lang": "en",        # lang: the language spoken
-            "template": "", "cap_lang": ""}   # cap_lang: the captions' language ("" is the language spoken)
+            "template": "", "cap_lang": "",   # cap_lang: the captions' language ("" is the language spoken)
+            "highlight_profile": "balanced", "analysis_quality": "fast", "viewer_model": "google/gemini-2.5-flash",
+            "min_viewer_score": 75, "visual_analysis": False}
 
 
 LIMITS = {"max_clips": (1, 20), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 2160)}
+
+
+def selection_policy(options) -> dict:
+    """The compatibility-safe selector mode. Missing fields mean the original path."""
+    raw = options if isinstance(options, dict) else {}
+    return {"highlight_profile": raw.get("highlight_profile") if raw.get("highlight_profile") in ("balanced", "meme_comedy") else "balanced",
+            "analysis_quality": raw.get("analysis_quality") if raw.get("analysis_quality") in ("fast", "enhanced") else "fast",
+            "viewer_max_calls": config.VIEWER_MAX_CALLS, "viewer_token_budget": config.VIEWER_TOKEN_BUDGET,
+            "viewer_cost_budget": config.VIEWER_COST_BUDGET}
+
+
+def _viewer_frames(source, start, end, work_dir):
+    """Up to six stills are optional evidence for one candidate; source video never leaves this machine."""
+    src = Path(source or "")
+    if not src.is_file():
+        return None, ()
+    count = min(6, max(1, int(end - start) // 8 + 2))
+    points = [round(start + (end - start) * n / max(1, count - 1), 2) for n in range(count)]
+    folder = Path(work_dir) / "viewer-frames"
+    folder.mkdir(exist_ok=True)
+    images = []
+    try:
+        for n, point in enumerate(points):
+            target = folder / f"{int(point * 100):08d}-{n}.jpg"
+            media.run(["ffmpeg", "-y", "-v", "error", "-ss", str(point), "-i", str(src), "-frames:v", "1",
+                       "-vf", "scale=512:-2", "-q:v", "4", str(target)], timeout=30)
+            images.append((target.read_bytes(), "image/jpeg"))
+    finally:
+        for file in folder.glob("*.jpg"):
+            file.unlink(missing_ok=True)
+        try:
+            folder.rmdir()
+        except OSError:
+            pass
+    return images, points
 
 
 def clean_options(options) -> dict:
     """Only known settings, each inside its allowed range. Raises ValueError on nonsense."""
     out = {}
     for k, v in (options if isinstance(options, dict) else {}).items():
+        if k == "visual_analysis":
+            if not isinstance(v, bool):
+                raise ValueError("Visual analysis must be on or off.")
+            out[k] = v
+            continue
         if k == "captions":
             if not isinstance(v, bool):
                 raise ValueError("Captions must be on or off.")
@@ -144,6 +186,16 @@ def clean_options(options) -> dict:
             v = str(v)[:12]                      # checked when the video is created (templates.pick)
         elif k == "cap_lang":                    # the captions' language: "" is the language spoken
             v = v if v in brain.CAP_LANGS else ""
+        elif k == "highlight_profile":
+            v = v if v in ("balanced", "meme_comedy") else "balanced"
+        elif k == "analysis_quality":
+            v = v if v in ("fast", "enhanced") else "fast"
+        elif k == "viewer_model":
+            v = str(v).strip()[:120]
+            if not v:
+                v = DEFAULTS["viewer_model"]
+        elif k == "min_viewer_score":
+            v = max(0, min(100, int(float(v))))
         else:                                    # range_start, range_end: seconds into the video
             v = float(v)
             if not math.isfinite(v) or v < 0:
@@ -355,7 +407,8 @@ def create(source: dict, options: dict, enqueue=True, creator=None, kind="video"
     if c:
         d = creators.root(c["id"]) / ("live" if kind == "live" else "videos") / jid
         s = creators.settings_for(c, camp)          # a campaign's own result rules win over the creator's
-        base = {**DEFAULTS, **{k: s[k] for k in ("max_clips", "min_len", "max_len", "style", "layout", "captions", "lang") if k in s},
+        base = {**DEFAULTS, **{k: s[k] for k in ("max_clips", "min_len", "max_len", "style", "layout", "captions", "lang",
+                                                  "highlight_profile", "analysis_quality", "viewer_model", "min_viewer_score", "visual_analysis") if k in s},
                 "hook_text": creators.clean_hook(s.get("hook_text")),
                 "description_text": creators.clean_description(s.get("description_text"))}
         if s.get("focus"):
@@ -1452,7 +1505,11 @@ def _run_job(job):
             found, ai = brain.find_clips(bw, db[s0: s0 + int((b - a) / 16000) + 1], (b - a) / 16000, job["title"],
                                          job["uploader"], quota, int(o["min_len"]), int(o["max_len"]), notes.append,
                                          game=game, force=bool(o.get("force")), focus=o.get("focus", ""),
-                                         lang=job.get("lang") or o.get("lang", ""))
+                                         lang=job.get("lang") or o.get("lang", ""), selection={**selection_policy(o),
+                                         **{k: o[k] for k in ("viewer_model", "min_viewer_score", "visual_analysis") if k in o}},
+                                         cancel=lambda: job.get("cancelled", False),
+                                         visual_frames=(lambda start, end: _viewer_frames(job.get("source_path"), start + shift,
+                                                                                                end + shift, d)) if o.get("visual_analysis") else None)
         except brain.NoAI as e:
             if not job["clips"]:
                 raise RuntimeError(f"No clips were made. {e}") from e

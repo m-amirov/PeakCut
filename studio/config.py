@@ -159,6 +159,10 @@ STATIC_MIN_SECONDS = float(env("PEAKCUT_STATIC_MIN_SECONDS", "6"))
 # How long one AI answer may take on a live stream. It is short on purpose: while the AI thinks, the
 # recording carries on, so a slow answer costs a check, not the stream.
 LIVE_AI_TIMEOUT = float(env("PEAKCUT_LIVE_AI_TIMEOUT", "45"))
+# Enhanced Viewer Judge is bounded independently from discovery. These are spend guards, not a provider invoice.
+VIEWER_MAX_CALLS = max(1, min(20, int(env("PEAKCUT_VIEWER_MAX_CALLS", "20"))))
+VIEWER_TOKEN_BUDGET = max(100, int(env("PEAKCUT_VIEWER_TOKEN_BUDGET", "20000")))
+VIEWER_COST_BUDGET = max(0.0, min(10.0, float(env("PEAKCUT_VIEWER_COST_BUDGET", "0.25"))))
 
 for d in (USERS_DIR, MODELS_DIR, TMP_DIR, FONTS_DIR):
     d.mkdir(parents=True, exist_ok=True)

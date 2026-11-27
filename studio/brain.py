@@ -340,7 +340,8 @@ def retry_wait(e, attempt, timeout=None):
     return min(float(wait), LIVE_MAX_WAIT if timeout else MAX_WAIT)
 
 
-def ask_ai(prompt, schema=None, purpose="AI call", timeout=None, audio=None, temperature=0.4, cheap=False, images=None, audit=None):
+def ask_ai(prompt, schema=None, purpose="AI call", timeout=None, audio=None, temperature=0.4, cheap=False, images=None, audit=None,
+           model_override=None):
     """Try each model in order, with retries for rate limits and overloads (see retry_wait).
     Returns (the answer, the model that gave it, tokens used) and notes the tokens in the usage record.
 
@@ -351,7 +352,7 @@ def ask_ai(prompt, schema=None, purpose="AI call", timeout=None, audio=None, tem
         raise RuntimeError("The AI is not set up on this server.")
     if audio and not ai.can_hear():
         raise RuntimeError("The AI service in use can't listen to audio.")
-    names = ai.audio_models() if audio else ai.fix_models() if cheap else ai.models()
+    names = [model_override] if model_override else (ai.audio_models() if audio else ai.fix_models() if cheap else ai.models())
     thinking = ai.fix_thinking() if cheap else ""
     last = None
     for model in names:
@@ -484,8 +485,21 @@ even if they are only mildly good. Still start on a full sentence and end after 
 """
 
 
+MEME_DISCOVERY = """
+For Meme & Comedy, prioritize a specific quotable line, punchline, absurdity, irony, self-deprecation, tease, cringe,
+awkward pause, slip, fail, reversal, authentic laugh/reaction, or funny game event. A normal coherent conversation,
+profanity, conflict, noise, or loudness is not enough. Never invent an event or joke; include setup, payoff and first
+meaningful reaction when the timestamps support them.
+"""
+
+# Catalog prices verified against OpenRouter's /models response on 2026-11-27. They are estimates only: provider
+# invoices and image-token accounting are not returned by a completion response.
+VIEWER_TOKEN_PRICES = {"google/gemini-2.5-flash": (0.0000003, 0.0000025),
+                       "google/gemini-2.5-flash-lite": (0.0000001, 0.0000004)}
+
+
 def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=15, max_len=60, log=print, game=None,
-               force=False, focus="", lang=""):
+               force=False, focus="", lang="", selection=None, cancel=None, visual_frames=None):
     """The best moments of a video, picked by the AI. With force, it is asked to return its best moments instead of
     none. Raises NoAI when it could not be reached at all. `focus`: what the person clipping wants (a campaign's
     "what to look for"); `game`: the game being played, for its own rules and tags."""
@@ -500,14 +514,18 @@ def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=
     while t < duration:
         windows.append((t, min(duration, t + WINDOW_SEC)))
         t += WINDOW_SEC - OVERLAP_SEC
-    per_window = max(2, min(8, int(np.ceil(max_clips * 1.5 / len(windows))) + 1))
+    policy = selection or {}
+    enhanced = policy.get("analysis_quality") == "enhanced"
+    meme = policy.get("highlight_profile") == "meme_comedy"
+    requested = min(20, max_clips * (2 if enhanced else 1))
+    per_window = max(2, min(20 if enhanced else 8, int(np.ceil(requested * 1.5 / len(windows))) + 1))
     extra = _game_rules(game)
     for a, b in windows:
         chunk = [l for l in lines if a <= l["s"] < b]
         if len(chunk) < 3:
             continue
         prompt = (HEAD.format(title=_safe(title) or "unknown", uploader=_safe(uploader) or "unknown", n=per_window)
-                  + extra + (FORCE_NOTE.format(n=per_window) if force else "") + _focus(focus) + _language_note(lang)
+                  + extra + (MEME_DISCOVERY if meme else "") + (FORCE_NOTE.format(n=per_window) if force else "") + _focus(focus) + _language_note(lang)
                   + _rules(min_len, max_len, _fmt(chunk)))
         if force:
             prompt = prompt.replace("Skip weak moments. Fewer strong clips beat many weak ones. Return [] if nothing is worth clipping.",
@@ -523,18 +541,55 @@ def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=
     if failed and not used_model:
         raise NoAI(f"{why[:300]}")
     note = "Part of the video was skipped because the AI didn't answer." if failed else ""
-    clips = []
-    for c in sorted(found, key=lambda c: -_num(c.get("score"))):
+    clips, rejected, viewer_tokens, viewer_latency, viewer_cost, viewer_calls, seen = [], [], 0, 0, 0.0, 0, []
+    candidate_limit = min(20, int(policy.get("viewer_max_calls", max_clips * 2))) if enhanced else max_clips
+    token_limit, cost_limit = int(policy.get("viewer_token_budget", 20000)), float(policy.get("viewer_cost_budget", 0.25))
+    for c in sorted(found, key=lambda c: -_num(c.get("score")))[:candidate_limit]:
+        if cancel and cancel():
+            break
         s, e = _snap(c, lines, words, min_len, max_len, duration)
         if e - s < min(min_len, duration) - 1:
             continue
-        if _overlaps(s, e, clips):
+        if _overlaps(s, e, seen):
             continue  # overlaps a better clip
-        clips.append(_metadata(c, s, e, game, lang, _fmt(lines)))
+        seen.append({"start": s, "end": e})  # deduplicate before a potentially paid Viewer Judge call
+        candidate = _metadata(c, s, e, game, lang, _fmt(lines))
+        candidate["original_ai_score"] = candidate["score"]
+        if enhanced:
+            if viewer_tokens >= token_limit or viewer_cost >= cost_limit:
+                rejected.append({"start": s, "end": e, "reason": "viewer_budget"})
+                break
+            context = _fmt([line for line in lines if s - 20 <= line["s"] <= e + 20])
+            images, frame_timestamps = None, ()
+            if policy.get("visual_analysis") and visual_frames:
+                try:
+                    images, frame_timestamps = visual_frames(s, e)
+                except Exception as err:  # Frame extraction is optional evidence, not a reason to fail a job.
+                    rejected.append({"start": s, "end": e, "reason": "visual_unavailable", "error": str(err)[:160]})
+            try:
+                viewer_calls += 1
+                viewer = viewer_judge(words, s, e, context=context, profile="meme_comedy" if meme else "balanced",
+                                      timeout=policy.get("viewer_timeout"), audit={}, model=policy.get("viewer_model"),
+                                      images=images, frame_timestamps=frame_timestamps)
+            except Exception as err:  # The job must say Enhanced failed; it must not pretend Fast selected this.
+                rejected.append({"start": s, "end": e, "reason": "viewer_error", "error": str(err)[:200]})
+                continue
+            viewer_tokens += viewer.get("tokens", 0); viewer_latency += viewer.get("latency_ms", 0)
+            viewer_cost += viewer.get("estimated_cost_usd") or 0.0
+            candidate["viewer"] = viewer
+            if viewer["viewer_score"] < int(policy.get("min_viewer_score", 75)):
+                rejected.append({"start": s, "end": e, "reason": "viewer_score", "viewer_score": viewer["viewer_score"]})
+                continue
+            candidate["reason"] = viewer.get("reason") or candidate["reason"]
+        clips.append(candidate)
         if len(clips) >= max_clips:
             break
     clips.sort(key=lambda c: c["start"])
-    return clips, {"model": used_model, "tokens": tokens, "note": note}
+    if enhanced and not clips and rejected:
+        note = (note + " " if note else "") + "Enhanced review did not accept a candidate."
+    return clips, {"model": used_model, "tokens": tokens + viewer_tokens, "note": note, "viewer_tokens": viewer_tokens,
+                   "viewer_calls": viewer_calls, "viewer_latency_ms": viewer_latency,
+                   "viewer_estimated_cost_usd": round(viewer_cost, 8), "viewer_rejected": rejected}
 
 
 def find_live_clips(words, z, now, chat=None, title="", uploader="", min_len=15, max_len=60, existing=(), game=None):
@@ -742,7 +797,7 @@ does not earn a recommendation. `humor_type` may be "none". Return only the requ
 
 
 def viewer_judge(words, start, end, context="", signals=None, profile="balanced", images=None, frame_timestamps=(), timeout=None,
-                 audit=None):
+                 audit=None, model=None):
     """Experimental independent viewer score for one already-proposed excerpt.
 
     The original selector score is intentionally absent from the prompt.  Callers retain it beside this result for
@@ -762,8 +817,9 @@ def viewer_judge(words, start, end, context="", signals=None, profile="balanced"
                                   signals=_safe(json.dumps(signals or {}, ensure_ascii=False), 800) or "Not available.",
                                   frame_timestamps=", ".join(f"{float(t):.1f}s" for t in frame_timestamps) if images else "None.")
     began = time.monotonic()
-    out, model, spent = ask_ai(prompt, VIEWER_SCHEMA, purpose="Research: viewer judge", timeout=timeout,
-                               temperature=0.0, images=images, audit=audit)
+    call_audit = audit if audit is not None else {}
+    out, used_model, spent = ask_ai(prompt, VIEWER_SCHEMA, purpose="Viewer judge", timeout=timeout,
+                                    temperature=0.0, images=images, audit=call_audit, model_override=model)
     answer = _first(out) or out
     if not isinstance(answer, dict):
         raise RuntimeError("Viewer judge returned no structured result")
@@ -773,7 +829,12 @@ def viewer_judge(words, start, end, context="", signals=None, profile="balanced"
     result["setup_timestamp"] = round(max(0.0, min(float(end), _num(answer.get("setup_timestamp")))), 2)
     result["payoff_timestamp"] = round(max(0.0, min(float(end), _num(answer.get("payoff_timestamp")))), 2)
     result["confidence"] = round(max(0.0, min(100.0, _num(answer.get("confidence")))), 2)
-    result["profile"], result["model"], result["tokens"], result["latency_ms"] = profile, model, spent, round((time.monotonic() - began) * 1000)
+    sent, wrote = call_audit.get("input_tokens", 0), call_audit.get("output_tokens", 0)
+    price = VIEWER_TOKEN_PRICES.get(used_model)
+    result["profile"], result["model"], result["tokens"], result["latency_ms"] = profile, used_model, spent, round((time.monotonic() - began) * 1000)
+    result["input_tokens"], result["output_tokens"] = sent, wrote
+    result["estimated_cost_usd"] = round(sent * price[0] + wrote * price[1], 8) if price else None
+    result["cost_note"] = "Estimated from text token catalog rates; provider billing and image-token charges are not available here."
     return result
 
 

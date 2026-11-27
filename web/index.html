@@ -3588,6 +3588,13 @@ function drawAdd(variant) {
         ${stepper("o_min", "Shortest", cr?.min_len ?? 15, 5, 120, 5, "s")}
         ${stepper("o_maxlen", "Longest", cr?.max_len ?? 60, 10, 180, 5, "s")}
       </div></div>
+      <div class="ob wide"><div class="ot">Highlight discovery</div><div class="nsteps">
+        <label class="f">Profile<select id="o_profile"><option value="balanced">Balanced</option><option value="meme_comedy">Meme &amp; Comedy</option></select></label>
+        <label class="f">Analysis<select id="o_quality"><option value="fast">Fast</option><option value="enhanced">Enhanced</option></select></label>
+        <label class="f">Viewer model<input id="o_viewer_model" maxlength="120" value="google/gemini-2.5-flash"></label>
+        <label class="f">Minimum viewer score<input id="o_viewer_score" type="number" min="0" max="100" value="75"></label>
+        <label class="sw"><input id="o_visual" type="checkbox">Experimental visual analysis</label>
+      </div><p class="help">Enhanced reviews a bounded candidate pool before rendering. Visual analysis sends a few frames, not the full video.</p></div>
       <div class="ob wide"><label class="f"><span class="ot" style="margin:0">Big text on every clip <span style="font-weight:400">(optional)</span></span>
         <input id="o_hook" maxlength="60" autocomplete="off" value="${esc(c?.hook_text || "")}" placeholder="Left empty, the AI writes a different one for each clip" aria-label="Big text on every clip"></label></div>
       <div class="ob wide"><label class="f"><span class="ot" style="margin:0">Description for every clip <span style="font-weight:400">(optional)</span></span>
@@ -3699,6 +3706,11 @@ function jobOptions() {
   if (capt && (!capt.checked || capt.dataset.overridden)) o.captions = capt.checked;
   if ($("#o_lang")?.value) o.lang = $("#o_lang").value;      // the language spoken
   if ($("#o_caplang")?.value) o.cap_lang = $("#o_caplang").value;   // the captions' language
+  if ($("#o_profile")) o.highlight_profile = $("#o_profile").value;
+  if ($("#o_quality")) o.analysis_quality = $("#o_quality").value;
+  if ($("#o_viewer_model")) o.viewer_model = $("#o_viewer_model").value.trim();
+  if ($("#o_viewer_score")) o.min_viewer_score = Number($("#o_viewer_score").value || 75);
+  if ($("#o_visual")) o.visual_analysis = $("#o_visual").checked;
   if (n("#o_from") !== null) o.range_start = n("#o_from") * 60;
   if (n("#o_to") !== null) o.range_end = n("#o_to") * 60;
   return o;
@@ -4036,7 +4048,7 @@ function clipHtml(j, c) {
   const key = `c:${j.id}:${c.id}`, busyClip = c.status === "queued" || c.status === "rendering";
   return `<article class="clip ${sel().has(key) ? "picked" : ""}">
     <button class="shot" data-act="openclip" ${a} aria-label="Open clip: ${esc(c.title || c.hook)}">${body}
-      <span class="badge l ${scoreCls(c.score)}" title="${c.score ? "AI score" : "Made by hand"}">${c.score ? `Score ${c.score}` : "By hand"}</span><span class="badge r">${fmt(c.end - c.start)}</span>${clipDots(c)}</button>
+      <span class="badge l ${scoreCls(c.score)}" title="${c.score ? "AI score" : "Made by hand"}">${c.score ? `Score ${c.score}` : "By hand"}</span><span class="badge r">${fmt(c.end - c.start)}</span>${c.viewer ? `<span class="badge" title="${esc(c.viewer.reason || "Viewer judge")}">Viewer ${Math.round(c.viewer.viewer_score || 0)}</span>` : ""}${clipDots(c)}</button>
     <div class="clip-body">
       <div class="ttl2" title="${esc(c.title || c.hook || "")}">${esc(c.title || c.hook || "Untitled clip")}</div>
       ${c.status === "done" ? clipWhere(c) : ""}
@@ -4297,6 +4309,11 @@ function drawCreatorForm() {
         <label class="f">Words judge must score at least<input data-k="min_score" type="number" min="0" max="100" value="${c.min_score}"></label>
         <label class="f">Make sure there's a live clip at least every<select data-k="must_clip_min">${opts({0:"Off", 15:"15 minutes", 30:"30 minutes", 60:"1 hour", 120:"2 hours"}, c.must_clip_min)}</select></label>
         <label class="f">Minimum gap between live clips (minutes)<input data-k="min_gap_min" type="number" min="0" max="60" value="${c.min_gap_min}"></label>
+        <label class="f">Highlight profile<select data-k="highlight_profile">${opts({balanced:"Balanced", meme_comedy:"Meme & Comedy"}, c.highlight_profile || "balanced")}</select></label>
+        <label class="f">Analysis quality<select data-k="analysis_quality">${opts({fast:"Fast", enhanced:"Enhanced"}, c.analysis_quality || "fast")}</select></label>
+        <label class="f">Viewer Judge model<input data-k="viewer_model" maxlength="120" value="${esc(c.viewer_model || "google/gemini-2.5-flash")}"></label>
+        <label class="f">Minimum Viewer Score<input data-k="min_viewer_score" type="number" min="0" max="100" value="${c.min_viewer_score ?? 75}"></label>
+        <label class="sw"><input data-k="visual_analysis" type="checkbox" ${c.visual_analysis ? "checked" : ""}><span>Experimental visual analysis<small>Uses a small set of frames; it does not send the full stream.</small></span></label>
         <label class="f span">Always clip the last 30 seconds when someone says<input data-k="trigger_words" value="${esc(c.trigger_words)}" placeholder="clip that, clip it"><small class="sub" style="font-weight:400">Separate phrases with commas. Matched on the transcript, so it needs no AI call.</small></label>
       </div></div>
     <div class="card"><h2>Streamer cam</h2><div id="camcard">${camCard(c)}</div></div>

@@ -773,6 +773,7 @@ class Session:
         """Judge 1 reads only the words. If it finds a moment, judge 2 reads only the loudness and chat activity
         for the same stretch, without seeing the words. A clip is made when both say yes (or as set in Setup)."""
         st = self.settings
+        enhanced_meme = st.get("analysis_quality") == "enhanced" and st.get("highlight_profile") == "meme_comedy"
         every = int(st.get("ai_every_min", 1)) or 1
         if window:                    # just the stretch around a jump, or around someone saying "clip"
             ws, now = max(0.0, window[0]), window[1]
@@ -792,7 +793,7 @@ class Session:
         diag = {"window": {"start": round(ws, 2), "end": round(now, 2)}, "trigger": why or "interval",
                 "transcript": [{"s": round(w["s"], 2), "e": round(w["e"], 2), "w": str(w["w"])[:80]} for w in win[:400]],
                 "words": [], "reaction": [], "shadow": {"reaction": [], "borderline": []}, "ai": {}, "result": ""}
-        if len(win) < 8:
+        if len(win) < (3 if enhanced_meme else 8):
             self.skipped += 1
             diag["result"] = "skipped: nobody talking"; self._diagnostic(diag)
             return self._verdict(verdict, "Skipped: nobody talking")
@@ -821,7 +822,7 @@ class Session:
         verdict["transcript"] = max((c["score"] for c in cands), default=0)
         # A strong automatic spike may be evaluated in shadow even when the words judge found no passing candidate.
         shadow = bool(self.settings.get("highlight_diagnostics") and why and (not keep or any(60 <= c["score"] < st["min_score"] for c in cands)))
-        if not keep and not shadow:
+        if not keep and not shadow and not enhanced_meme:
             diag["result"] = "rejected: words judge"; self._diagnostic(diag)
             return self._verdict(verdict, "Words judge: nothing clip-worthy")
         z = brain.loud_zscore(np.array(self.db, dtype=np.float32))
@@ -843,6 +844,41 @@ class Session:
         diag["signals"] = self._signal_summary(z[lo:hi], chat)
         diag["ai"]["reaction"] = reaction_ai or {"tokens": tok2 if "tok2" in locals() else 0}
         diag["reaction"] = [dict(m) for m in sig]
+        if enhanced_meme:
+            # Enhanced comedy is allowed to review a bounded, meaningful transcript candidate even when the two
+            # legacy judges do not agree. A reaction spike alone never enters this pool.
+            pool = list(keep) + [c for c in cands if 60 <= c.get("score", 0) < st["min_score"]]
+            unique = []
+            for c in sorted(pool, key=lambda x: -x.get("score", 0)):
+                if any(c["end"] >= old["start"] - 3 and c["start"] <= old["end"] + 3 for old in unique):
+                    continue
+                unique.append(c)
+            diag["viewer"] = []
+            for c in unique[:2]:
+                signal_context = {"loudness": self._signal_summary(z[lo:hi], chat).get("loudness"),
+                                  "chat": self._signal_summary(z[lo:hi], chat).get("chat")}
+                try:
+                    viewer = brain.viewer_judge(win, c["start"], c["end"], context=brain._fmt(brain.make_lines(win)),
+                                                signals=signal_context, profile="meme_comedy", timeout=config.LIVE_AI_TIMEOUT,
+                                                model=st.get("viewer_model"))
+                except Exception as e:  # explicit failure, never Fast fallback
+                    diag["viewer"].append({"start": c["start"], "end": c["end"], "result": "error", "error": str(e)[-160:]})
+                    continue
+                c["original_ai_score"], c["viewer"] = c["score"], viewer
+                diag["viewer"].append({"start": c["start"], "end": c["end"], "viewer_score": viewer["viewer_score"],
+                                       "reason": viewer.get("reason", "")})
+                if viewer["viewer_score"] < st.get("min_viewer_score", 75):
+                    continue
+                if any(abs(c["start"] - k["start"]) < st["min_gap_min"] * 60 for k in self.job["clips"]):
+                    continue
+                c["judges"] = {"words": c["score"], "reaction": None, "viewer": viewer["viewer_score"], "why": "Viewer judge accepted"}
+                c["reason"] = viewer.get("reason") or c.get("reason", "")
+                self._add_clip(c)
+                self._verdict(verdict, "Clipped: viewer judge accepted")
+                diag["result"] = "accepted: viewer judge"; self._diagnostic(diag)
+                return
+            diag["result"] = "rejected: viewer judge"; self._diagnostic(diag)
+            return self._verdict(verdict, "Viewer judge: no qualifying candidate")
         if shadow:
             # These are review candidates only. Noise or a reaction by itself can never queue a production clip.
             diag["shadow"]["reaction"] = [dict(m) for m in sig if m["score"] >= 50 and not any(

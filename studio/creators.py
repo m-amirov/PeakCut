@@ -21,6 +21,8 @@ DEFAULTS = {"name": "", "channel": "", "style": "bounce", "layout": "blur", "cap
             "decide_mode": "both", "must_clip_min": 0, "min_gap_min": 2,
             # Observation only: records bounded, local evidence for comparing highlight judges. It never changes picks.
             "highlight_diagnostics": False, "diagnostic_save_media": False,
+            "highlight_profile": "balanced", "analysis_quality": "fast", "viewer_model": "google/gemini-2.5-flash",
+            "min_viewer_score": 75, "visual_analysis": False,
             "game": "", "hook_text": "", "description_text": "",
             "trigger_words": "clip that, clip it",
             "autopost": False, "accounts": [], "post_min_score": 75, "post_gap_min": 45, "daily_cap": 6,
@@ -432,7 +434,7 @@ def drop_campaign(cid, key: str):
 
 
 NUMERIC = {"min_len": (5, 120), "max_len": (10, 180), "max_clips": (1, 20), "min_score": (0, 100), "buffer_min": (5, 120), "live_per_hour": (1, 60), "ai_every_min": (1, 30), "auto_jump_pct": (20, 300), "must_clip_min": (0, 240), "min_gap_min": (0, 60),
-           "post_min_score": (0, 100), "post_gap_min": (5, 1440), "daily_cap": (1, 50)}
+           "post_min_score": (0, 100), "post_gap_min": (5, 1440), "daily_cap": (1, 50), "min_viewer_score": (0, 100)}
 
 
 def root(cid) -> Path:
@@ -456,7 +458,7 @@ def _clean(data: dict) -> dict:
         if k in NUMERIC:
             lo, hi = NUMERIC[k]
             v = max(lo, min(hi, int(float(v))))
-        elif k in ("auto_watch", "autopost", "ai_only_on_spike", "highlight_diagnostics", "diagnostic_save_media"):
+        elif k in ("auto_watch", "autopost", "ai_only_on_spike", "highlight_diagnostics", "diagnostic_save_media", "visual_analysis"):
             v = bool(v)
         elif k == "channels":
             v = {p: channel_link(str(u).strip()[:300]) for p, u in (v.items() if isinstance(v, dict) else []) if p in PLATFORMS and str(u).strip()}
@@ -472,6 +474,12 @@ def _clean(data: dict) -> dict:
             v = max(0.0, min(1000.0, float(v or 0)))
         elif k == "decide_mode":
             v = v if v in ("both", "either") else "both"
+        elif k == "highlight_profile":
+            v = v if v in ("balanced", "meme_comedy") else "balanced"
+        elif k == "analysis_quality":
+            v = v if v in ("fast", "enhanced") else "fast"
+        elif k == "viewer_model":
+            v = str(v).strip()[:120] or "google/gemini-2.5-flash"
         elif k == "privacy":
             v = v if v in ("public", "unlisted", "private") else "public"
         elif k == "lang":

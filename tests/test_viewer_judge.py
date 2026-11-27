@@ -37,7 +37,7 @@ check("meme profile is explicit and original score cannot bias the judge", "Prof
       and "original score" not in seen["prompt"].lower())
 check("structured schema and frames use the existing AI client", seen["schema"] is brain.VIEWER_SCHEMA
       and seen["kwargs"]["images"] == [(b"jpeg", "image/jpeg")] and "10.0s, 15.0s" in seen["prompt"]
-      and seen["purpose"] == "Research: viewer judge")
+      and seen["purpose"] == "Viewer judge")
 try:
     brain.viewer_judge(words, 10, 16, profile="gaming")
     check("unknown profile is rejected", False)

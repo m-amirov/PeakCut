@@ -24,7 +24,8 @@ _states: dict = {}   # one-time values for the connect redirects: state -> (user
 
 SECRET_KEYS = ("discord_webhook", "telegram_token")
 SETTING_DEFAULTS = {"discord_webhook": "", "telegram_token": "", "telegram_chat": "", "paused": False,
-                    "digest_hour": 8, "last_digest": "", "tour_done": False, "os_seen": False, "rated": False, "day_limit": 3}
+                    "digest_hour": 8, "last_digest": "", "tour_done": False, "os_seen": False, "rated": False,
+                    "day_limit": 3, "ui_locale": "ru"}
 
 YT_SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
 IG = "https://graph.instagram.com"
@@ -279,6 +280,10 @@ def save_settings(patch: dict) -> dict:
                 continue
             if k in ("paused", "tour_done", "os_seen", "rated"):
                 v = bool(v)
+            elif k == "ui_locale":
+                v = str(v).strip().lower()
+                if v not in ("ru", "en"):
+                    raise ValueError("Choose Russian or English for the interface.")
             elif k == "digest_hour":
                 v = max(0, min(23, int(v)))
             elif k == "day_limit":

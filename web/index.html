@@ -2245,6 +2245,7 @@ textarea.cpg-in{height:auto;padding:8px 12px;resize:vertical}.cpg-in:focus{borde
 .cin-lib .cin-track{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 10px;padding:12px 0;border-bottom:1px solid var(--line)}
 .cin-track small{color:var(--dim)}.cin-track audio{width:100%;height:30px;grid-column:1/-1}.cin-jobs{display:grid;gap:12px}.cin-job video{width:180px;max-width:100%;aspect-ratio:9/16;background:#1f1713;object-fit:contain}.cin-job{display:grid;grid-template-columns:180px minmax(0,1fr);gap:14px}.cin-job .bar{height:7px;background:var(--muted);border-radius:9px;overflow:hidden;margin:10px 0}.cin-job .bar i{display:block;height:100%;background:var(--brand)}
 @media (max-width:800px){.cin-grid{grid-template-columns:1fr}.cin-job{grid-template-columns:1fr}.cin-job video{width:150px}.cin-form .fields,.cin-checks{grid-template-columns:1fr}}
+.cin-form label,.cin-lib label{min-width:0}.cin-form select,.cin-form input,.cin-lib input{min-width:0;max-width:100%}.cin-caption-preview{overflow-wrap:anywhere}.cin-jobs,.cin-job,.cin-job>div,.cin-job .cin-actions{min-width:0}.cin-job h3,.cin-job p,.cin-job .cin-actions{overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -2340,6 +2341,119 @@ const I = {
  "cal_f": "<path d=\"M208,32H184V24a8,8,0,0,0-16,0v8H88V24a8,8,0,0,0-16,0v8H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32Zm0,48H48V48H72v8a8,8,0,0,0,16,0V48h80v8a8,8,0,0,0,16,0V48h24Z\"/>"
 };
 const ic = n => `<svg viewBox="0 0 256 256" aria-hidden="true">${I[n]}</svg>`;
+// UI text is keyed here so locale changes never touch user content, API enum
+// values, model IDs or platform names. English remains the fallback for a key
+// that has not been translated yet.
+let UI_LOCALE = "ru";
+const RU = {
+  "nav.home": "Главная", "nav.videos": "Все видео", "nav.cinematic": "Кинематографический монтаж",
+  "nav.streamers": "Стримеры", "nav.campaigns": "Кампании", "nav.schedule": "Расписание",
+  "nav.styles": "Стили", "nav.settings": "Настройки", "nav.ai": "ИИ", "nav.updates": "Что нового",
+  "nav.your_streamers": "Ваши стримеры", "nav.new_streamer": "Новый стример", "nav.owner": "Владелец",
+  "nav.admin": "Панель администратора", "common.cancel": "Отмена", "common.confirm": "Подтвердить", "common.tour": "Открыть обзор", "common.feedback": "Отправить отзыв", "common.sign_out": "Выйти",
+  "common.save": "Сохранить", "common.close": "Закрыть", "common.refresh": "Обновить", "common.seconds": "секунд",
+  "common.report": "Сообщить", "common.upload": "Загрузить", "common.download": "Скачать",
+  "common.ready": "Готово", "common.loading": "Загрузка…", "common.search": "Поиск",
+  "shell.subtitle.ai": "Ваш ИИ-сервис, ключ и история использования ИИ.",
+  "shell.subtitle.campaigns": "Бренды платят за просмотры.", "shell.subtitle.discover": "Клипы из эфира круглосуточно.",
+  "shell.subtitle.schedule": "Когда ваши клипы будут опубликованы.", "shell.subtitle.library": "Все видео и записи.",
+  "shell.subtitle.cinematic": "Создавайте вертикальный монтаж из локального видео и разрешённой музыки.",
+  "shell.subtitle.settings": "Профиль, безопасность, приложения и ИИ.", "shell.subtitle.styles": "Как выглядят ваши клипы.",
+  "shell.morning": "Доброе утро", "shell.afternoon": "Добрый день", "shell.evening": "Добрый вечер",
+  "shell.settings_short": "Ключ ИИ и подключённые приложения",
+  "updates.updated": "PeakCut обновлён до последней версии", "common.got_it": "Понятно", "common.later": "Позже",
+  "cinematic.title": "Кинематографический монтаж", "cinematic.note": "Загрузите MP4, MKV или MOV. PeakCut сохранит исходник, локально найдёт сцены и создаст воспроизводимый план монтажа.",
+  "cinematic.music_source": "Источник музыки", "cinematic.edit_mode": "Режим монтажа", "cinematic.atmosphere": "Атмосфера",
+  "cinematic.music_genre": "Жанр музыки", "cinematic.duration": "Длительность", "cinematic.edit_focus": "Тема монтажа",
+  "cinematic.discovery_model": "Модель поиска сцен", "cinematic.director_model": "Модель режиссуры", "cinematic.audio_mode": "Аудиорежим",
+  "cinematic.caption_mode": "Режим субтитров", "cinematic.caption_style": "Стиль субтитров", "cinematic.caption_language": "Язык субтитров",
+  "cinematic.caption_preview": "Предпросмотр субтитров", "cinematic.hard_cut": "Приоритет прямых склеек",
+  "cinematic.speed": "Плавная вариация скорости", "cinematic.reframe": "Умное кадрирование", "cinematic.color": "Кинематографическая цветокоррекция",
+  "cinematic.transitions": "Выборочные переходы", "cinematic.create": "Создать кинематографический монтаж",
+  "cinematic.library": "Музыкальная библиотека", "cinematic.jobs": "Ваши кинематографические монтажи",
+  "cinematic.no_jobs": "Кинематографических монтажей пока нет.", "cinematic.music_only": "Только музыка",
+  "cinematic.dialogue_intro": "Вступительная реплика и музыка", "cinematic.key_dialogue": "Музыка и ключевые реплики",
+  "cinematic.original_audio": "Исходный звук", "cinematic.story": "Кинематографическая история", "cinematic.character": "Эдит персонажа",
+  "cinematic.action": "Динамичный эдит", "cinematic.emotional": "Эмоциональный эдит", "cinematic.phonk": "Phonk / Aura эдит",
+  "cinematic.auto": "Авто", "cinematic.library_choose": "Библиотека — выбрать трек", "cinematic.upload_music": "Загрузить — использовать файл для этого эдита",
+  "cinematic.no_music_fallback": "Автоматический режим не заменяет музыку исходным звуком. Выберите подтверждённый трек или явно включите исходный звук.",
+  "settings.language": "Язык интерфейса", "settings.language_help": "Язык интерфейса не меняет язык ASR, метаданных или субтитров.",
+  "settings.russian": "Русский", "settings.english": "English", "settings.language_saved": "Язык интерфейса сохранён.",
+  "settings.language_tab": "Язык", "settings.language_tab_help": "Язык кнопок, подсказок и сообщений PeakCut",
+  "settings.profile": "Профиль", "settings.security": "Безопасность", "settings.apps": "Подключённые приложения",
+  "settings.speech": "Модели речи", "settings.storage": "Хранилище", "settings.updates": "Обновления", "settings.app": "Приложение",
+  "settings.profile_help": "Имя, почта и способ входа", "settings.security_help": "Пароль и выход из аккаунта",
+  "settings.apps_help": "Куда публикуются клипы", "settings.speech_help": "Языки, которые PeakCut распознаёт",
+  "settings.storage_help": "Где хранятся видео и клипы", "settings.updates_help": "Получение новых версий", "settings.app_help": "Запуск PeakCut через значок",
+  "settings.app_title": "PeakCut как приложение", "settings.app_help_long": "Добавьте значок PeakCut на рабочий стол и в меню Пуск. Нажатие запускает PeakCut в отдельном окне.", "settings.create_icon": "Создать значок PeakCut", "settings.taskbar_help": "Чтобы закрепить его на панели задач Windows, откройте меню Пуск, найдите PeakCut, нажмите правой кнопкой и выберите «Закрепить на панели задач». Если папка PeakCut перемещена, создайте значок заново.", "settings.close_peakcut": "Закрыть PeakCut", "settings.close_peakcut_help": "Запущенный со значка PeakCut работает в фоне. Здесь его можно закрыть.", "settings.close": "Закрыть", "settings.email_password": "Почта и пароль", "settings.added": "Добавлено",
+  "settings.updates_help_long": "PeakCut проверяет новую версию на GitHub каждую минуту. Обновление сохраняет настройки, ключи, видео и клипы.", "settings.this_version": "Эта версия", "settings.newer_version": "Новая версия", "settings.available": "Доступна", "settings.up_to_date": "Установлена последняя версия", "settings.update_now": "Обновить сейчас", "settings.update_auto": "Обновлять автоматически", "settings.update_auto_help": "При включении новая версия устанавливается сама, когда ничего не записывается и не создаётся, после чего PeakCut перезапускается. По умолчанию выключено.",
+  "settings.speech_title": "Модели речи", "settings.speech_help_long": "PeakCut распознаёт речь в видео с помощью модели, которая работает на этом компьютере: по одной модели на язык. Английская модель доступна всегда. Добавьте другой язык и выберите его при добавлении видео или в настройках стримера.", "settings.download_failed": "Последняя загрузка не удалась. Проверьте подключение к интернету и попробуйте снова.", "settings.downloading": "Загрузка", "settings.download": "Загрузить", "settings.remove": "Удалить", "settings.profile_title": "Профиль", "settings.email": "Почта", "settings.not_confirmed": "Не подтверждена", "settings.confirmed": "Подтверждена", "settings.signin_method": "Способ входа", "settings.account_type": "Тип аккаунта", "settings.admin": "Администратор", "settings.standard": "Обычный", "settings.member_since": "Участник с", "settings.google_profile": "Имя и фото получены из аккаунта Google.",
+  "settings.password_title": "Пароль", "settings.password_change_help": "Измените пароль для входа. На других устройствах сеансы будут завершены.", "settings.google_password_help": "Вы входите через Google. Можно также задать пароль для входа по почте.", "settings.current_password": "Текущий пароль", "settings.new_password": "Новый пароль", "settings.password": "Пароль", "settings.password_placeholder": "Не менее 8 символов", "settings.change_password": "Изменить пароль", "settings.set_password": "Задать пароль", "settings.forgot": "Забыли пароль?", "settings.sessions": "Сеансы", "settings.signout_device": "Выйти на этом устройстве.", "settings.sign_out": "Выйти", "settings.delete_account": "Удалить аккаунт", "settings.delete_account_help": "Аккаунт и все его данные будут удалены: стримеры, записи, видео, клипы и история.", "settings.delete_my_account": "Удалить мой аккаунт",
+  "settings.storage_title": "Хранилище", "settings.storage_help_long": "В одной папке PeakCut хранятся видео, клипы, записи, стримеры и настройки. Её можно открыть, сохранить резервную копию или перенести на диск с большим свободным местом.", "settings.drive_full": "На диске почти не осталось места, поэтому PeakCut не может принять новые видео.", "settings.drive_pending": "Папка изменится при следующем запуске PeakCut.", "settings.undo": "Отменить", "settings.open_folder": "Открыть папку", "settings.used": "Используется PeakCut", "settings.free_of": "свободно из", "settings.data_env": "Папка задана через PEAKCUT_DATA в файле .env. Измените её там или удалите строку, чтобы выбрать папку здесь.", "settings.new_folder": "Новая папка", "settings.browse": "Обзор", "settings.move_data": "Перенести туда всё содержимое текущей папки", "settings.storage_restart": "Изменение вступит в силу при следующем запуске PeakCut; во время обработки видео ничего не перемещается.", "settings.use_folder": "Использовать эту папку", "settings.change_folder": "Изменить папку",
+  "settings.apps_title": "Подключённые приложения", "settings.apps_help_long": "Подключите аккаунты, в которые PeakCut публикует клипы: нажмите «Подключить», войдите на странице платформы и вернитесь сюда. PeakCut не видит ваши пароли. Затем выберите аккаунты для каждого стримера в его настройках.", "settings.connected": "Подключено", "settings.disconnect": "Отключить", "settings.add_another": "Добавить ещё", "settings.connect": "Подключить", "settings.setup": "Настроить", "settings.server_not_setup": "Сервер не настроен", "settings.save": "Сохранить", "settings.close_panel": "Закрыть", "settings.copy": "Копировать", "settings.open_all": "Открыть для всех пользователей",
+  "status.insufficient": "Недостаточно подходящего материала", "status.quality_gate": "Проверка качества не пройдена",
+  "errors.insufficient": "Недостаточно подходящего материала для выбранной длительности. Выберите более короткий монтаж или измените тему монтажа.",
+  "cinematic.source": "Исходное видео", "cinematic.confirmed_local": "только подтверждённая локальная библиотека",
+  "cinematic.no_music": "без музыки", "cinematic.music_track": "Музыкальный трек", "cinematic.library_empty": "Библиотека пуста",
+  "cinematic.music_file": "Музыкальный файл", "cinematic.upload_note": "Файл используется только для этого эдита, если не сохранить его ниже.",
+  "cinematic.save_upload": "Также сохранить этот файл в музыкальной библиотеке", "cinematic.intensity": "Интенсивность эффектов",
+  "cinematic.focus_description": "Описание темы", "cinematic.focus_short": "тема", "cinematic.music_offset": "Смещение начала музыки",
+  "cinematic.caption_mode": "Режим субтитров", "cinematic.caption_size": "Размер субтитров", "cinematic.caption_position": "Позиция субтитров",
+  "cinematic.caption_color": "Цвет субтитров", "cinematic.highlight_color": "Цвет выделения", "cinematic.beat_sync": "Синхронизация с музыкой",
+  "cinematic.dynamic_zoom": "Динамическое приближение", "cinematic.keep_dialogue": "Сохранить исходные реплики", "cinematic.ducking": "Приглушение музыки",
+  "cinematic.ai_review": "Проверка сцен ИИ (ограниченная)", "cinematic.caption_preview_text": "Предпросмотр субтитров · выбранные реплики появятся здесь.",
+  "cinematic.library_note": "Только локальные файлы · YouTube Audio Library · Pixabay Music. Наличие трека в каталоге не подтверждает коммерческие права.",
+  "cinematic.import": "Импортировать и проанализировать", "cinematic.atmosphere_values": "Драматичная", "cinematic.dark_cinematic": "Тёмный кинематографичный", "cinematic.emotional_value": "Эмоциональная",
+  "cinematic.epic": "Эпичная", "cinematic.natural_film": "Естественная плёнка", "cinematic.phonk_value": "Phonk",
+  "cinematic.auto_atmosphere": "Авто по атмосфере", "cinematic.light": "Лёгкая", "cinematic.medium": "Средняя", "cinematic.strong": "Сильная",
+  "cinematic.character_description": "Имя или описание персонажа", "cinematic.specific_event": "Конкретное событие", "cinematic.emotional_moment": "Эмоциональный момент", "cinematic.action_sequence": "Динамичная сцена",
+  "cinematic.bottom_safe": "Нижняя безопасная зона", "cinematic.middle": "По центру", "cinematic.top_safe": "Верхняя безопасная зона",
+  "cinematic.off": "Выкл.", "cinematic.dialogue_only": "Только реплики", "cinematic.key_dialogue_value": "Ключевые реплики", "cinematic.all_dialogue": "Все сохранённые реплики",
+  "cinematic.aura_phonk": "Aura / Phonk", "cinematic.dynamic": "Динамичный", "cinematic.movie_original": "Оригинал фильма",
+  "cinematic.search_library": "Поиск в библиотеке", "cinematic.genre_filter": "Фильтр жанра", "cinematic.mood_filter": "Фильтр настроения", "cinematic.placeholder_title_artist": "Название, исполнитель или URL источника", "cinematic.placeholder_genre": "кинематографичный", "cinematic.placeholder_mood": "драматичный", "cinematic.placeholder_genres": "кинематографичный, оркестровый", "cinematic.placeholder_source": "Официальная страница источника", "cinematic.placeholder_license": "Страница лицензии", "cinematic.placeholder_verified": "Только если подтверждено", "cinematic.placeholder_attribution": "Обязательная атрибуция, если нужна", "cinematic.placeholder_platforms": "youtube, instagram",
+  "cinematic.min_bpm": "Мин. BPM", "cinematic.max_bpm": "Макс. BPM", "cinematic.min_seconds": "Мин. секунд", "cinematic.max_seconds": "Макс. секунд",
+  "cinematic.filter_library": "Фильтровать библиотеку", "cinematic.import_composition": "Импортировать разрешённую композицию",
+  "cinematic.genres": "Жанры", "cinematic.moods": "Настроения", "cinematic.source_url": "URL источника", "cinematic.license_url": "URL лицензии",
+  "cinematic.license_type": "Тип лицензии", "cinematic.attribution": "Атрибуция", "cinematic.allowed_platforms": "Разрешённые платформы", "cinematic.content_id": "Content ID",
+  "cinematic.confirmed_permission": "Я подтвердил разрешение на использование этого трека", "cinematic.no_tracks": "Треков пока нет. Импортируйте разрешённую локальную композицию для автоматического выбора.",
+  "cinematic.filter_unknown": "Неизвестно", "cinematic.filter_known": "Известен", "cinematic.filter_registered": "Зарегистрирован",
+  "cinematic.unknown_artist": "Неизвестный исполнитель", "cinematic.duration_unknown": "длительность неизвестна", "cinematic.bpm_fallback": "BPM не определён",
+  "cinematic.permission_confirmed": "Разрешение подтверждено пользователем", "cinematic.license_unknown": "Лицензия неизвестна — исключено из авто-выбора",
+  "cinematic.favorite": "В избранное", "cinematic.unfavorite": "Убрать из избранного", "cinematic.edit_tags": "Изменить теги", "cinematic.analyze": "Анализировать", "cinematic.delete": "Удалить",
+  "cinematic.recording": "Запись", "cinematic.ready": "Готово", "cinematic.cancelled": "Отменено", "cinematic.working": "В работе",
+  "cinematic.music": "Музыка", "cinematic.used": "использовано", "cinematic.scene_analysis": "Анализ сцен", "cinematic.event_analysis": "Анализ событий",
+  "cinematic.ai_scene_review": "Проверка сцен ИИ", "cinematic.caption_timeline": "Таймлайн субтитров", "cinematic.quality_gate": "Проверка качества", "cinematic.license": "Лицензия", "cinematic.metrics": "Метрики",
+  "status.stopped": "Монтаж остановлен.", "cinematic.caption_off": "Субтитры выключены · реплики не будут записаны в MP4.",
+  "cinematic.caption_selected": "Выбранные реплики появятся на сохранённых кадрах.", "cinematic.selected_music": "Выбранная музыка", "cinematic.before_rendering": "до рендера",
+  "cinematic.music_required_auto": "Нужна музыка: авто-режим не нашёл подтверждённый трек подходящей длины. Выберите библиотеку или загрузку; исходный звук включается явно.",
+  "cinematic.original_audio_note": "Явно выбран исходный звук; музыкальный трек добавляться не будет.",
+  "cinematic.plan_note": "Музыка анализируется до режиссёрского плана. Для динамичных режимов используются прямые склейки; плавные переходы оставлены для спокойных или эмоциональных фрагментов. Умное кадрирование использует локальные якоря лица, если они подтверждены, иначе безопасное letterbox-кадрирование.",
+  "cinematic.selection_manual": "Выбрано вручную из локальной музыкальной библиотеки.", "cinematic.selection_local": "Связная последовательность событий; семантическая проверка ИИ не использовалась.", "cinematic.music_library_empty_code": "В музыкальной библиотеке нет подходящего подтверждённого трека.",
+  "cinematic.selection_auto_empty": "Нет подтверждённого трека подходящей длины; выберите загрузку или исходный звук.",
+  "cinematic.auto_original_warning": "Автоматический режим не нашёл подтверждённый трек и не подменял его исходным звуком.",
+  "cinematic.rhythm_warning": "Уверенность в ритме музыки недостаточна для beat-склеек; использован естественный темп сцен.",
+  "cinematic.short_warning": "Выбранная последовательность одобренных сцен короче запрошенной длительности; неподтверждённые соседние кадры не добавлялись.",
+  "cinematic.beat_disabled_warning": "Синхронизация с музыкой отключена: музыкальные границы сделали бы одобренный материал короче запроса.",
+  "cinematic.transition_disabled_warning": "Плавные переходы отключены: их перекрытия превысили доступную длительность одобренного материала.",
+  "cinematic.music_required": "Нужна музыка: выберите подтверждённый трек из библиотеки или загрузите музыку. Исходный звук доступен только при явном выборе.",
+  "cinematic.download": "Скачать MP4", "cinematic.render_again": "Рендерить снова", "cinematic.unknown_artist": "Неизвестный исполнитель",
+  "cinematic.license_unknown": "Лицензия неизвестна — исключено из авто-выбора", "cinematic.permission_confirmed": "Разрешение подтверждено пользователем"
+};
+function tr(key, fallback = key, values = {}) {
+  const text = UI_LOCALE === "ru" ? (RU[key] || fallback) : fallback;
+  return Object.entries(values).reduce((out, [name, value]) => out.replaceAll(`{${name}}`, String(value)), text);
+}
+function setUiLocale(value) {
+  UI_LOCALE = value === "en" ? "en" : "ru";
+  document.documentElement.lang = UI_LOCALE;
+  S.locale = UI_LOCALE;
+}
+function localizeError(message) {
+  if (UI_LOCALE !== "ru" || typeof message !== "string") return message;
+  if (/Insufficient suitable footage/i.test(message)) return tr("errors.insufficient", message);
+  if (/Quality Gate failed/i.test(message)) return `${tr("status.quality_gate", "Quality Gate failed")}: ${message.replace(/^Quality Gate failed:\s*/i, "")}`;
+  return message;
+}
 const navIc = (n, v) => ic(S.view === v && I[n + "_f"] ? n + "_f" : n);
 const fmt = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s % 60).padStart(2, "0"); };
 const clock = t => new Date(t * 1000).toLocaleString([], {weekday:"short", hour:"2-digit", minute:"2-digit"});
@@ -2349,7 +2463,7 @@ const opts = (map, val) => Object.entries(map).map(([k, v]) => `<option value="$
 async function api(path, opt) {
   const r = await fetch(path, opt);
   if (r.status === 401) { location.href = "/login"; throw new Error("Please sign in."); }
-  if (!r.ok) { let d = r.statusText; try { d = (await r.json()).detail || d; } catch {} throw new Error(typeof d === "string" ? d : "Something went wrong"); }
+  if (!r.ok) { let d = r.statusText; try { d = (await r.json()).detail || d; } catch {} throw new Error(localizeError(typeof d === "string" ? d : "Something went wrong")); }
   return r.json();
 }
 const send = (path, body, method = "POST") => api(path, {method, headers:{"Content-Type":"application/json"}, body:JSON.stringify(body ?? {})});
@@ -2518,7 +2632,7 @@ function startTour() {
 }
 
 /* ============================================================ state */
-const S = {status:{styles:{}, layouts:{}}, jobs:[], creators:[], accounts:[], overview:null, settings:null,
+const S = {status:{styles:{}, layouts:{}}, jobs:[], creators:[], accounts:[], overview:null, settings:null, locale:UI_LOCALE,
            view:"overview", ctab:"clips", ce:{jobs:[], tracks:[], categories:[], source:null, musicUpload:null, loading:false,
            filters:{q:"", genre:"", mood:"", min_bpm:"", max_bpm:"", min_duration:"", max_duration:""}}};
 const D = {jid:null, cid:null, sig:""};
@@ -2689,8 +2803,8 @@ function openAcct() {
   const u = S.status.user;
   const on = S.status.accounts !== false;
   p.innerHTML = `${on ? `<div class="who2"><b>${esc(u.name)}</b><span>${esc(u.email)}</span></div>` : ""}
-    <button data-act="go" data-v="settings">${ic("cog")}Settings</button><button data-act="go" data-v="styles">${ic("film")}Styles</button><button data-act="go" data-v="usage">${ic("bolt")}AI</button><button data-act="tour">${ic("play")}Take the tour</button>${S.status.links?.follow ? `<button data-act="feedback">${ic("chat")}Send feedback</button>` : ""}
-    ${on ? `<button class="danger" data-act="logout">${ic("signout")}Sign out</button>` : ""}`;
+    <button data-act="go" data-v="settings">${ic("cog")}${tr("nav.settings", "Settings")}</button><button data-act="go" data-v="styles">${ic("film")}${tr("nav.styles", "Styles")}</button><button data-act="go" data-v="usage">${ic("bolt")}${tr("nav.ai", "AI")}</button><button data-act="tour">${ic("play")}${tr("common.tour", "Take the tour")}</button>${S.status.links?.follow ? `<button data-act="feedback">${ic("chat")}${tr("common.feedback", "Send feedback")}</button>` : ""}
+    ${on ? `<button class="danger" data-act="logout">${ic("signout")}${tr("common.sign_out", "Sign out")}</button>` : ""}`;
   openPop(p, $("[data-act=acctmenu]"));
 }
 document.addEventListener("click", e => { if (!e.target.closest(".pop, [data-act=bell], [data-act=acctmenu]")) closePops(); });
@@ -2784,7 +2898,7 @@ function updateHow() {
   d.onclose = () => { if (d.returnValue === "later") { try { localStorage.setItem("peakcut_update_seen", up.latest); } catch {} drawShell(); } };
   d.returnValue = "ok"; d.showModal();
 }
-function greeting() { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; }
+function greeting() { const h = new Date().getHours(); return h < 12 ? tr("shell.morning", "Good morning") : h < 18 ? tr("shell.afternoon", "Good afternoon") : tr("shell.evening", "Good evening"); }
 let lastInd = null;
 addEventListener("resize", () => { lastInd = null; const i = $("#utabs .ind"); if (i) i.remove(); moveInd(); });   // where the orange pill was, so it can slide from there to the new tab
 function moveInd() {
@@ -2800,8 +2914,8 @@ function moveInd() {
   lastInd = {x, w};
 }
 function drawShell() {  const nav = (v, icon, label, extra = "") => `<button class="nav-item ${S.view === v ? "on" : ""}" data-act="go" data-v="${esc(v)}" title="${esc(label)}">${icon}<span class="label">${esc(label)}</span>${extra}</button>`;
-  put($("#nav"), nav("overview", navIc("home", "overview"), "Home") +
-    nav("library", navIc("film", "library"), "All videos", (() => {
+  put($("#nav"), nav("overview", navIc("home", "overview"), tr("nav.home", "Home")) +
+    nav("library", navIc("film", "library"), tr("nav.videos", "All videos"), (() => {
       // anything of yours still moving: a video being made, a stream being recorded, or a clip being made again
       const making = S.jobs.filter(j => ["queued", "running"].includes(j.status)).length,
             rec = S.jobs.filter(j => j.status === "live").length,
@@ -2810,36 +2924,36 @@ function drawShell() {  const nav = (v, icon, label, extra = "") => `<button cla
       const tip = [making && `${making} video${making > 1 ? "s" : ""} being made`, rec && `${rec} stream${rec > 1 ? "s" : ""} recording`,
                    redo && `clips being made again in ${redo} video${redo > 1 ? "s" : ""}`].filter(Boolean).join(", ");
       return w ? `<span class="working" title="${tip}"><i></i>${w} working</span>` : S.jobs.length ? `<span class="count">${S.jobs.length}</span>` : ""; })()) +
-    nav("cinematic", navIc("film", "cinematic"), "Cinematic Edit", S.ce.jobs.some(j => ["queued", "running"].includes(j.status)) ? `<span class="working" title="Cinematic edit in progress"><i></i></span>` : "") +
-    nav("discover", navIc("radio", "discover"), "Streamers", S.creators.length ? `<span class="count" title="Your streamers">${S.creators.length}</span>` : "") +
-    nav("campaigns", navIc("money", "campaigns"), "Campaigns", S.mc.list.length ? `<span class="count" title="Your campaigns">${S.mc.list.length}</span>` : "") +
-    (postSoon() ? "" : nav("schedule", navIc("cal", "schedule"), "Schedule", schDot())) +
-    `<h4><span>Your streamers</span></h4>` +
+    nav("cinematic", navIc("film", "cinematic"), tr("nav.cinematic", "Cinematic Edit"), S.ce.jobs.some(j => ["queued", "running"].includes(j.status)) ? `<span class="working" title="${tr("cinematic.in_progress", "Cinematic edit in progress")}"><i></i></span>` : "") +
+    nav("discover", navIc("radio", "discover"), tr("nav.streamers", "Streamers"), S.creators.length ? `<span class="count" title="${tr("nav.your_streamers", "Your streamers")}">${S.creators.length}</span>` : "") +
+    nav("campaigns", navIc("money", "campaigns"), tr("nav.campaigns", "Campaigns"), S.mc.list.length ? `<span class="count" title="${tr("nav.campaigns", "Your campaigns")}">${S.mc.list.length}</span>` : "") +
+    (postSoon() ? "" : nav("schedule", navIc("cal", "schedule"), tr("nav.schedule", "Schedule"), schDot())) +
+    `<h4><span>${tr("nav.your_streamers", "Your streamers")}</span></h4>` +
     [...S.creators].sort((a, b) => (!!b.live_job - !!a.live_job) || (!!liveOn(b).length - !!liveOn(a).length)).map(c => nav("c:" + c.id, cav(c), c.name,
       c.live_job ? `<span class="sb-tag rec" title="Recording now"><i></i>Rec</span>`
         : liveOn(c).length ? `<span class="sb-tag" title="Live on ${esc(liveOn(c).map(([k]) => PLAT[k].name).join(" and "))}"><i></i>Live</span>` : "")).join("") +
     dzSuggest() +
-    `<button class="nav-item" data-act="newcreator" title="New creator">${ic("plusc")}<span class="label">New streamer</span></button>` +
-    (S.status.user?.role === "admin" && S.status.accounts !== false ? `<h4><span>Owner</span></h4><a class="nav-item" href="/admin" title="Admin dashboard" style="text-decoration:none">${ic("shield")}<span class="label">Admin dashboard</span></a>` : ""));
+    `<button class="nav-item" data-act="newcreator" title="${tr("nav.new_streamer", "New creator")}">${ic("plusc")}<span class="label">${tr("nav.new_streamer", "New streamer")}</span></button>` +
+    (S.status.user?.role === "admin" && S.status.accounts !== false ? `<h4><span>${tr("nav.owner", "Owner")}</span></h4><a class="nav-item" href="/admin" title="${tr("nav.admin", "Admin dashboard")}" style="text-decoration:none">${ic("shield")}<span class="label">${tr("nav.admin", "Admin dashboard")}</span></a>` : ""));
   const st = S.status;
   const k = S.status.ai;
   put($("#foot"), (k ? `<button class="ai-card ${S.view === "usage" ? "on" : ""}" data-act="go" data-v="usage" title="${k.ready ? `AI: ${esc(k.provider || "ready")}, ${k.today_calls || 0} calls today` : "The AI is not set up"}">
       <span class="ai-ic">${ic("bolt")}</span><span class="ai-tx"><small>AI</small><b>${k.ready ? esc(k.provider || "Ready") : "Not set up"}</b></span>${k.ready ? `<span class="ai-n">${(k.today_calls || 0).toLocaleString()} today</span>` : ""}</button>` : "") +
     (S.status.user ? `<div class="me"><button class="me-btn" data-act="acctmenu" aria-haspopup="menu" aria-expanded="false">${meAvatar(S.status.user)}
-      <span class="who">${S.status.accounts === false ? `<b>Settings</b><span>AI key, connected apps</span>` : `<b>${esc(S.status.user.name)}</b><span>${esc(S.status.user.email)}</span>`}</span></button>
+      <span class="who">${S.status.accounts === false ? `<b>${tr("nav.settings", "Settings")}</b><span>${tr("shell.settings_short", "AI key, connected apps")}</span>` : `<b>${esc(S.status.user.name)}</b><span>${esc(S.status.user.email)}</span>`}</span></button>
       <button class="icon-btn bell" data-act="bell" title="Notifications" aria-label="Notifications${S.status.unread ? `, ${S.status.unread} new` : ""}" aria-haspopup="dialog">${ic("bell")}${S.status.unread ? `<span class="dotn">${S.status.unread > 9 ? "9+" : S.status.unread}</span>` : ""}</button></div>` : ""));
   const c = creator();
   const recording = S.creators.filter(x => x.live_job).length;
-  let title = {overview:"Home", library:"All videos", cinematic:"Cinematic Edit", settings:"Settings", styles:"Styles", usage:"AI", discover:"Streamers", campaigns:"Campaigns", schedule:"Schedule", updates:"What's new"}[S.view] || "", sub = "", act = "";
-  if (S.view === "usage") sub = "Your AI service and key, and what the AI has been used for.";
-  if (S.view === "campaigns") sub = "Brands pay you per view.";
-  if (S.view === "discover") sub = "Clipped live, 24/7.";
-  if (S.view === "schedule") sub = "When your clips go out.";
-  if (S.view === "overview") sub = `${greeting()}. ${S.creators.length} streamer${S.creators.length === 1 ? "" : "s"}${recording ? `, ${recording} recording now` : ""}.`;
-  if (S.view === "library") sub = "Every video and recording.";
-  if (S.view === "cinematic") sub = "Create a vertical music edit from your local video and licensed music library.";
-  if (S.view === "settings") sub = (S.status.accounts === false ? "Your AI key, apps and storage." : "Profile, security, apps and AI.");
-  if (S.view === "styles") sub = "How your clips look.";
+  let title = {overview:tr("nav.home", "Home"), library:tr("nav.videos", "All videos"), cinematic:tr("nav.cinematic", "Cinematic Edit"), settings:tr("nav.settings", "Settings"), styles:tr("nav.styles", "Styles"), usage:tr("nav.ai", "AI"), discover:tr("nav.streamers", "Streamers"), campaigns:tr("nav.campaigns", "Campaigns"), schedule:tr("nav.schedule", "Schedule"), updates:tr("nav.updates", "What's new")}[S.view] || "", sub = "", act = "";
+  if (S.view === "usage") sub = tr("shell.subtitle.ai", "Your AI service and key, and what the AI has been used for.");
+  if (S.view === "campaigns") sub = tr("shell.subtitle.campaigns", "Brands pay you per view.");
+  if (S.view === "discover") sub = tr("shell.subtitle.discover", "Clipped live, 24/7.");
+  if (S.view === "schedule") sub = tr("shell.subtitle.schedule", "When your clips go out.");
+  if (S.view === "overview") sub = `${greeting()}. ${S.creators.length} ${UI_LOCALE === "ru" ? "стример" : "streamer"}${S.creators.length === 1 ? "" : UI_LOCALE === "ru" ? "ов" : "s"}${recording ? `, ${recording} ${UI_LOCALE === "ru" ? "в эфире" : "recording now"}` : ""}.`;
+  if (S.view === "library") sub = tr("shell.subtitle.library", "Every video and recording.");
+  if (S.view === "cinematic") sub = tr("shell.subtitle.cinematic", "Create a vertical music edit from your local video and licensed music library.");
+  if (S.view === "settings") sub = tr("shell.subtitle.settings", "Profile, security, apps and AI.");
+  if (S.view === "styles") sub = tr("shell.subtitle.styles", "How your clips look.");
   let pic = "", subHtml = null, tabs = "";
   if (S.view === "discover") {
     const on = S.dzv === "mine" ? "mine" : "find", n = S.creators.length;
@@ -2876,7 +2990,7 @@ function drawShell() {  const nav = (v, icon, label, extra = "") => `<button cla
   const done = S.status.updated;
   let doneSeen = "";
   try { doneSeen = localStorage.getItem("peakcut_updated_seen") || ""; } catch {}
-  const upBar = done && done.version !== doneSeen ? `<div class="vb ok" role="status">${ic("check")}<span><b>PeakCut is updated</b> to the latest version (${esc(done.version)}).</span><button class="btn sm primary" data-act="updseen">Got it</button></div>`
+  const upBar = done && done.version !== doneSeen ? `<div class="vb ok" role="status">${ic("check")}<span>${tr("updates.updated", "PeakCut is updated")} (${esc(done.version)}).</span><button class="btn sm primary" data-act="updseen">${tr("common.got_it", "Got it")}</button></div>`
     : up && !upd?.doing && up.latest !== upSeen ? `<div class="vb" role="status">${ic("up")}<span>${up.restart ? "<b>The new version is downloaded.</b> Close PeakCut and start it again to use it." : `A new version of PeakCut is out${up.behind ? `: <b>${up.behind} update${up.behind === 1 ? "" : "s"}</b> since yours` : ""}.`}</span>
     ${upd?.can ? `<button class="btn sm primary" data-act="updnow">Update now</button><button class="btn sm" data-act="updhow">What's new</button>` : `<button class="btn sm primary" data-act="updhow">${up.restart ? "What's new" : "How to update"}</button>`}<button class="btn sm ghost" data-act="updlater" aria-label="Hide until the next version">Later</button></div>` : "";
   const toolBar = S.status.no_ffmpeg ? `<div class="vb" role="alert">${ic("warn")}<span><b>PeakCut can't make clips yet: ffmpeg isn't installed on this computer.</b> Open a terminal, run <code>winget install Gyan.FFmpeg</code> (Mac: <code>brew install ffmpeg</code>, Linux: <code>sudo apt install ffmpeg</code>), then close PeakCut and start it again.</span></div>` : "";
@@ -3500,7 +3614,7 @@ document.addEventListener("change", async e => {
   catch (err) { toast(err.message, "bad"); } finally { b.disabled = false; $(".pv", p).textContent = "Add to a creator"; }
 });
 
-function ceTrackLabel(t) { return `${t.title || t.file_name || "Untitled"}${t.artist ? ` · ${t.artist}` : ""}${t.license?.status !== "confirmed" ? " · licence unknown" : ""}`; }
+function ceTrackLabel(t) { return `${t.title || t.file_name || "Untitled"}${t.artist ? ` · ${t.artist}` : ""}${t.license?.status !== "confirmed" ? ` · ${tr("cinematic.license_unknown", "Licence unknown — excluded from Auto")}` : ""}`; }
 function drawCinematic() {
   const box = $("#cinematic"); if (!box) return;
   const ce = S.ce, tracks = ce.tracks || [], filters = ce.filters || {};
@@ -3508,52 +3622,56 @@ function drawCinematic() {
   const query = $("#ce_lib_query")?.value || filters.q || "";
   const trackOptions = tracks.map(t => `<option value="${esc(t.id)}">${esc(ceTrackLabel(t))}</option>`).join("");
   box.innerHTML = `<div class="cin-grid">
-    <section class="card cin-form"><h2>Cinematic Edit</h2><p class="cin-note">Upload one MP4, MKV or MOV. PeakCut keeps the source, detects scenes locally and writes a repeatable edit plan.</p>
+    <section class="card cin-form"><h2>${tr("cinematic.title", "Cinematic Edit")}</h2><p class="cin-note">${tr("cinematic.note", "Upload one MP4, MKV or MOV. PeakCut keeps the source, detects scenes locally and writes a repeatable edit plan.")}</p>
       <div class="fields">
-        <label class="wide">Source video<input id="ce_video" type="file" accept="video/mp4,video/quicktime,video/x-matroska,.mp4,.mov,.mkv"></label>
-        <label>Music source<select id="ce_music_source"><option value="auto">Auto — confirmed local library only</option><option value="library">Library — choose a track</option><option value="upload">Upload — use this file for this edit</option><option value="original_audio">Original Audio — no music</option></select></label>
-        <label>Edit mode<select id="ce_edit_mode"><option value="cinematic_story">Cinematic Story</option><option value="character_edit">Character Edit</option><option value="action_edit">Action Edit</option><option value="emotional_edit">Emotional Edit</option><option value="phonk_aura">Phonk / Aura Edit</option></select></label>
-        <label>Atmosphere<select id="ce_atmosphere"><option value="dramatic">Dramatic</option><option value="dark_cinematic">Dark Cinematic</option><option value="emotional">Emotional</option><option value="epic">Epic</option><option value="natural_film">Natural Film</option><option value="phonk">Phonk</option></select></label>
-        <label>Music genre<select id="ce_genre"><option value="">Auto by atmosphere</option><option>cinematic</option><option>epic</option><option>dramatic</option><option>dark</option><option>emotional</option><option>ambient</option><option>action</option><option>phonk</option></select></label>
-        <label id="ce_track_wrap">Music track<select id="ce_track">${trackOptions || `<option value="">Library is empty</option>`}</select></label>
-        <label id="ce_upload_wrap" hidden>Music file<input id="ce_music_file" type="file" accept="audio/mpeg,audio/wav,audio/mp4,audio/flac,audio/ogg,.mp3,.wav,.m4a,.flac,.ogg"><span class="cin-note">Upload is used only for this edit unless saved below.</span></label><label id="ce_save_wrap" hidden style="flex-direction:row;align-items:center;color:var(--text)"><input id="ce_save_upload" type="checkbox"> Also save this upload in Music Library</label>
-        <label>Duration<select id="ce_duration"><option>15</option><option selected>30</option><option>45</option><option>60</option></select></label>
-        <label>Effects intensity<select id="ce_intensity"><option value="light">Light</option><option value="medium" selected>Medium</option><option value="strong">Strong</option></select></label>
-        <label>Edit Focus<select id="ce_focus"><option value="auto">Auto</option><option value="character">Character name or description</option><option value="event">Specific event</option><option value="emotional">Emotional moment</option><option value="action">Action sequence</option></select></label>
-        <label id="ce_focus_text_wrap" hidden>Focus description<input id="ce_focus_text" type="text" maxlength="240" placeholder="e.g. Guy chooses to become a hero"></label>
-        <label>Music start offset<input id="ce_offset" type="number" min="0" step="0.1" value="0"> seconds</label>
-        <label>Discovery model<select id="ce_discovery_model"><option value="google/gemini-2.5-flash-lite" selected>Gemini Flash Lite</option><option value="google/gemini-2.5-flash">Gemini Flash</option></select></label>
-        <label>Director model<select id="ce_director_model"><option value="google/gemini-2.5-flash" selected>Gemini Flash</option><option value="google/gemini-2.5-flash-lite">Gemini Flash Lite</option></select></label>
-        <label>Audio mode<select id="ce_audio_mode"><option value="music_only">Music Only</option><option value="dialogue_intro_music">Dialogue Intro + Music</option><option value="music_key_dialogue">Music + Key Dialogue</option><option value="original_audio">Original Audio</option></select></label>
-        <label>Captions<select id="ce_caption_mode"><option value="off">Off</option><option value="dialogue_only">Dialogue only</option><option value="key_dialogue">Key dialogue</option><option value="all_dialogue">All retained dialogue</option></select></label>
-        <label>Caption style<select id="ce_caption_style"><option value="cinematic">Cinematic</option><option value="aura_phonk">Aura / Phonk</option><option value="dynamic">Dynamic</option><option value="movie_original">Movie Original</option></select></label>
-        <label>Caption language<select id="ce_caption_language"><option value="en">English</option><option value="ru">Russian</option><option value="ar">Arabic</option></select></label>
-        <label>Caption size<input id="ce_caption_size" type="number" min="60" max="140" step="1" value="96"></label>
-        <label>Caption position<select id="ce_caption_position"><option value="bottom">Bottom safe zone</option><option value="middle">Middle</option><option value="top">Top safe zone</option></select></label>
-        <label>Caption colour<input id="ce_caption_color" type="text" value="FFF8EE" pattern="[0-9A-Fa-f]{6}" maxlength="6"></label>
-        <label>Highlight colour<input id="ce_caption_highlight" type="text" value="FFD27A" pattern="[0-9A-Fa-f]{6}" maxlength="6"></label>
+        <label class="wide">${tr("cinematic.source", "Source video")}<input id="ce_video" type="file" accept="video/mp4,video/quicktime,video/x-matroska,.mp4,.mov,.mkv"></label>
+        <label>${tr("cinematic.music_source", "Music source")}<select id="ce_music_source"><option value="auto">${tr("cinematic.auto", "Auto")} — ${tr("cinematic.confirmed_local", "confirmed local library only")}</option><option value="library">${tr("cinematic.library_choose", "Library — choose a track")}</option><option value="upload">${tr("cinematic.upload_music", "Upload — use this file for this edit")}</option><option value="original_audio">${tr("cinematic.original_audio", "Original Audio")} — ${tr("cinematic.no_music", "no music")}</option></select></label>
+        <label>${tr("cinematic.edit_mode", "Edit mode")}<select id="ce_edit_mode"><option value="cinematic_story">${tr("cinematic.story", "Cinematic Story")}</option><option value="character_edit">${tr("cinematic.character", "Character Edit")}</option><option value="action_edit">${tr("cinematic.action", "Action Edit")}</option><option value="emotional_edit">${tr("cinematic.emotional", "Emotional Edit")}</option><option value="phonk_aura">${tr("cinematic.phonk", "Phonk / Aura Edit")}</option></select></label>
+        <label>${tr("cinematic.atmosphere", "Atmosphere")}<select id="ce_atmosphere"><option value="dramatic">${tr("cinematic.atmosphere_values", "Dramatic")}</option><option value="dark_cinematic">${tr("cinematic.dark_cinematic", "Dark Cinematic")}</option><option value="emotional">${tr("cinematic.emotional_value", "Emotional")}</option><option value="epic">${tr("cinematic.epic", "Epic")}</option><option value="natural_film">${tr("cinematic.natural_film", "Natural Film")}</option><option value="phonk">${tr("cinematic.phonk_value", "Phonk")}</option></select></label>
+        <label>${tr("cinematic.music_genre", "Music genre")}<select id="ce_genre"><option value="">${tr("cinematic.auto_atmosphere", "Auto by atmosphere")}</option><option>cinematic</option><option>epic</option><option>dramatic</option><option>dark</option><option>emotional</option><option>ambient</option><option>action</option><option>phonk</option></select></label>
+        <label id="ce_track_wrap">${tr("cinematic.music_track", "Music track")}<select id="ce_track">${trackOptions || `<option value="">${tr("cinematic.library_empty", "Library is empty")}</option>`}</select></label>
+        <label id="ce_upload_wrap" hidden>${tr("cinematic.music_file", "Music file")}<input id="ce_music_file" type="file" accept="audio/mpeg,audio/wav,audio/mp4,audio/flac,audio/ogg,.mp3,.wav,.m4a,.flac,.ogg"><span class="cin-note">${tr("cinematic.upload_note", "Upload is used only for this edit unless saved below.")}</span></label><label id="ce_save_wrap" hidden style="flex-direction:row;align-items:center;color:var(--text)"><input id="ce_save_upload" type="checkbox"> ${tr("cinematic.save_upload", "Also save this upload in Music Library")}</label>
+        <label>${tr("cinematic.duration", "Duration")}<select id="ce_duration"><option>15</option><option selected>30</option><option>45</option><option>60</option></select></label>
+        <label>${tr("cinematic.intensity", "Effects intensity")}<select id="ce_intensity"><option value="light">${tr("cinematic.light", "Light")}</option><option value="medium" selected>${tr("cinematic.medium", "Medium")}</option><option value="strong">${tr("cinematic.strong", "Strong")}</option></select></label>
+        <label>${tr("cinematic.edit_focus", "Edit Focus")}<select id="ce_focus"><option value="auto">${tr("cinematic.auto", "Auto")}</option><option value="character">${tr("cinematic.character_description", "Character name or description")}</option><option value="event">${tr("cinematic.specific_event", "Specific event")}</option><option value="emotional">${tr("cinematic.emotional_moment", "Emotional moment")}</option><option value="action">${tr("cinematic.action_sequence", "Action sequence")}</option></select></label>
+        <label id="ce_focus_text_wrap" hidden>${tr("cinematic.focus_description", "Focus description")}<input id="ce_focus_text" type="text" maxlength="240" placeholder="e.g. Guy chooses to become a hero"></label>
+        <label>${tr("cinematic.music_offset", "Music start offset")}<input id="ce_offset" type="number" min="0" step="0.1" value="0"> ${tr("common.seconds", "seconds")}</label>
+        <label>${tr("cinematic.discovery_model", "Discovery model")}<select id="ce_discovery_model"><option value="google/gemini-2.5-flash-lite" selected>Gemini Flash Lite</option><option value="google/gemini-2.5-flash">Gemini Flash</option></select></label>
+        <label>${tr("cinematic.director_model", "Director model")}<select id="ce_director_model"><option value="google/gemini-2.5-flash" selected>Gemini Flash</option><option value="google/gemini-2.5-flash-lite">Gemini Flash Lite</option></select></label>
+        <label>${tr("cinematic.audio_mode", "Audio mode")}<select id="ce_audio_mode"><option value="music_only">${tr("cinematic.music_only", "Music Only")}</option><option value="dialogue_intro_music">${tr("cinematic.dialogue_intro", "Dialogue Intro + Music")}</option><option value="music_key_dialogue">${tr("cinematic.key_dialogue", "Music + Key Dialogue")}</option><option value="original_audio">${tr("cinematic.original_audio", "Original Audio")}</option></select></label>
+        <label>${tr("cinematic.caption_mode", "Caption Mode")}<select id="ce_caption_mode"><option value="off">${tr("cinematic.off", "Off")}</option><option value="dialogue_only">${tr("cinematic.dialogue_only", "Dialogue only")}</option><option value="key_dialogue">${tr("cinematic.key_dialogue_value", "Key dialogue")}</option><option value="all_dialogue">${tr("cinematic.all_dialogue", "All retained dialogue")}</option></select></label>
+        <label>${tr("cinematic.caption_style", "Caption Style")}<select id="ce_caption_style"><option value="cinematic">Cinematic</option><option value="aura_phonk">${tr("cinematic.aura_phonk", "Aura / Phonk")}</option><option value="dynamic">${tr("cinematic.dynamic", "Dynamic")}</option><option value="movie_original">${tr("cinematic.movie_original", "Movie Original")}</option></select></label>
+        <label>${tr("cinematic.caption_language", "Caption Language")}<select id="ce_caption_language"><option value="en">English</option><option value="ru">Russian</option><option value="ar">Arabic</option></select></label>
+        <label>${tr("cinematic.caption_size", "Caption size")}<input id="ce_caption_size" type="number" min="60" max="140" step="1" value="96"></label>
+        <label>${tr("cinematic.caption_position", "Caption position")}<select id="ce_caption_position"><option value="bottom">${tr("cinematic.bottom_safe", "Bottom safe zone")}</option><option value="middle">${tr("cinematic.middle", "Middle")}</option><option value="top">${tr("cinematic.top_safe", "Top safe zone")}</option></select></label>
+        <label>${tr("cinematic.caption_color", "Caption colour")}<input id="ce_caption_color" type="text" value="FFF8EE" pattern="[0-9A-Fa-f]{6}" maxlength="6"></label>
+        <label>${tr("cinematic.highlight_color", "Highlight colour")}<input id="ce_caption_highlight" type="text" value="FFD27A" pattern="[0-9A-Fa-f]{6}" maxlength="6"></label>
       </div>
       <div class="cin-checks">
-        <label><input id="ce_beat" type="checkbox" checked> Beat Sync</label><label><input id="ce_zoom" type="checkbox" checked> Dynamic Zoom</label>
-        <label><input id="ce_grade" type="checkbox" checked> Cinematic Color Grading</label><label><input id="ce_reframe" type="checkbox" checked> Smart Reframe (saliency)</label>
-        <label><input id="ce_trans" type="checkbox" checked> Selective Transitions</label><label><input id="ce_hard_cut" type="checkbox"> Hard Cut Priority</label><label><input id="ce_speed" type="checkbox"> Gentle Speed Variation</label>
-        <label><input id="ce_dialogue" type="checkbox"> Keep Original Dialogue</label><label><input id="ce_duck" type="checkbox" checked> Audio Ducking</label>
-        <label><input id="ce_ai" type="checkbox"> AI Scene Review (bounded)</label>
+        <label><input id="ce_beat" type="checkbox" checked> ${tr("cinematic.beat_sync", "Beat Sync")}</label><label><input id="ce_zoom" type="checkbox" checked> ${tr("cinematic.dynamic_zoom", "Dynamic Zoom")}</label>
+        <label><input id="ce_grade" type="checkbox" checked> ${tr("cinematic.color", "Cinematic Color Grading")}</label><label><input id="ce_reframe" type="checkbox" checked> ${tr("cinematic.reframe", "Smart Reframe (saliency)")}</label>
+        <label><input id="ce_trans" type="checkbox" checked> ${tr("cinematic.transitions", "Selective Transitions")}</label><label><input id="ce_hard_cut" type="checkbox"> ${tr("cinematic.hard_cut", "Hard Cut Priority")}</label><label><input id="ce_speed" type="checkbox"> ${tr("cinematic.speed", "Gentle Speed Variation")}</label>
+        <label><input id="ce_dialogue" type="checkbox"> ${tr("cinematic.keep_dialogue", "Keep Original Dialogue")}</label><label><input id="ce_duck" type="checkbox" checked> ${tr("cinematic.ducking", "Audio Ducking")}</label>
+        <label><input id="ce_ai" type="checkbox"> ${tr("cinematic.ai_review", "AI Scene Review (bounded)")}</label>
       </div>
-      <div id="ce_caption_preview" class="cin-note" style="position:relative;margin-top:14px;min-height:180px;padding:18px 14px;background:#1B1512;color:#FFF8EE;border:2px solid #FFD27A;border-radius:10px;text-align:center;font-size:18px;display:grid;place-items:center;overflow:hidden"><video id="ce_caption_preview_video" muted playsinline controls hidden style="width:100%;max-height:360px;object-fit:contain"></video><span id="ce_caption_preview_text">Caption preview · The selected dialogue will appear here.</span></div>
-      <p id="ce_music_status" class="cin-note" style="margin-top:14px">Music selection is checked before rendering. Auto never falls back to Original Audio.</p>
-      <p class="cin-note">Music is analyzed before the Director plan. Character, Action and Phonk / Aura use hard cuts by default; crossfades are reserved for calm story or emotional punctuation. Smart Reframe uses smoothed local face anchors when visible and a safe letterbox fallback when a crop is not proven. AI requests remain bounded to representative frames and selected dialogue.</p>
-      <div class="cin-actions"><button type="button" class="btn primary" data-ce="create">Create Cinematic Edit</button><button type="button" class="btn" data-ce="refresh">Refresh</button></div>
+      <div id="ce_caption_preview" class="cin-note" style="position:relative;margin-top:14px;min-height:180px;padding:18px 14px;background:#1B1512;color:#FFF8EE;border:2px solid #FFD27A;border-radius:10px;text-align:center;font-size:18px;display:grid;place-items:center;overflow:hidden"><video id="ce_caption_preview_video" muted playsinline controls hidden style="width:100%;max-height:360px;object-fit:contain"></video><span id="ce_caption_preview_text">${tr("cinematic.caption_preview_text", "Caption preview · The selected dialogue will appear here.")}</span></div>
+      <p id="ce_music_status" class="cin-note" style="margin-top:14px">${tr("cinematic.no_music_fallback", "Music selection is checked before rendering. Auto never falls back to Original Audio.")}</p>
+      <p class="cin-note">${tr("cinematic.plan_note", "Music is analyzed before the Director plan. Character, Action and Phonk / Aura use hard cuts by default; crossfades are reserved for calm story or emotional punctuation. Smart Reframe uses smoothed local face anchors when visible and a safe letterbox fallback when a crop is not proven. AI requests remain bounded to representative frames and selected dialogue.")}</p>
+      <div class="cin-actions"><button type="button" class="btn primary" data-ce="create">${tr("cinematic.create", "Create Cinematic Edit")}</button><button type="button" class="btn" data-ce="refresh">${tr("common.refresh", "Refresh")}</button></div>
     </section>
-    <section class="card cin-lib"><h2>Music Library</h2><p class="cin-note">Local only · <a href="https://studio.youtube.com/" target="_blank" rel="noopener">YouTube Audio Library</a> · <a href="https://pixabay.com/music/" target="_blank" rel="noopener">Pixabay Music</a>. A catalogue listing is not proof of commercial rights.</p>
-      <div class="fields"><label>Search library<input id="ce_lib_query" type="search" value="${esc(query)}" placeholder="Title, artist or source URL"></label><label>Genre filter<input id="ce_lib_genre" value="${esc(filters.genre || "")}" placeholder="cinematic"></label><label>Mood filter<input id="ce_lib_mood" value="${esc(filters.mood || "")}" placeholder="dramatic"></label><label>Min BPM<input id="ce_lib_min_bpm" type="number" min="0" value="${esc(filters.min_bpm || "")}"></label><label>Max BPM<input id="ce_lib_max_bpm" type="number" min="0" value="${esc(filters.max_bpm || "")}"></label><label>Min seconds<input id="ce_lib_min_duration" type="number" min="0" value="${esc(filters.min_duration || "")}"></label><label>Max seconds<input id="ce_lib_max_duration" type="number" min="0" value="${esc(filters.max_duration || "")}"></label><button type="button" class="btn sm" data-ce="search">Filter library</button></div>
-      <label>Import permitted composition<input id="ce_lib_file" type="file" accept="audio/mpeg,audio/wav,audio/mp4,audio/flac,audio/ogg,.mp3,.wav,.m4a,.flac,.ogg"></label>
-      <div class="fields" style="margin-top:10px"><label>Genres<input id="ce_lib_genres" type="text" placeholder="cinematic, orchestral"></label><label>Moods<input id="ce_lib_moods" type="text" placeholder="dramatic"></label><label>Source URL<input id="ce_lib_source" type="text" placeholder="Official source page"></label><label>License URL<input id="ce_lib_license" type="text" placeholder="License page"></label><label>License type<input id="ce_lib_type" type="text" placeholder="Only if verified"></label><label>Attribution<input id="ce_lib_attribution" type="text" placeholder="Required attribution, if any"></label><label>Allowed platforms<input id="ce_lib_platforms" type="text" placeholder="youtube, instagram"></label><label>Content ID<select id="ce_lib_content_id"><option value="unknown">Unknown</option><option value="known">Known</option><option value="registered">Registered</option></select></label></div>
-      <label style="margin-top:10px;flex-direction:row;align-items:center;color:var(--text)"><input id="ce_lib_confirm" type="checkbox"> I confirmed this track's permission for the intended use</label>
-      <button type="button" class="btn sm" data-ce="import">Import and analyze</button>
-      <div style="margin-top:12px">${tracks.length ? tracks.map(t => `<div class="cin-track"><div><b>${esc(t.title || t.file_name)}</b><br><small>${esc(t.artist || "Unknown artist")} · ${t.duration ? fmt(t.duration) : "duration unknown"} · ${t.analysis?.bpm_estimate ? `${t.analysis.bpm_estimate} BPM` : "BPM fallback"}</small><br><small>${t.license?.status === "confirmed" ? "Permission confirmed by user" : "Licence unknown — excluded from Auto"}</small></div><div class="row"><button type="button" class="btn sm" data-ce="fav" data-id="${esc(t.id)}">${t.favorite ? "Unfavorite" : "Favorite"}</button><button type="button" class="btn sm ghost" data-ce="edit-track" data-id="${esc(t.id)}">Edit tags</button><button type="button" class="btn sm ghost" data-ce="reanalyze" data-id="${esc(t.id)}">Analyze</button><button type="button" class="btn sm danger" data-ce="delete-track" data-id="${esc(t.id)}">Delete</button></div><audio controls preload="none" src="/media/music/${esc(t.id)}"></audio></div>`).join("") : `<p class="cin-note">No tracks yet. Import one permitted local composition to enable Auto selection.</p>`}</div>
+    <section class="card cin-lib"><h2>${tr("cinematic.library", "Music Library")}</h2><p class="cin-note">${tr("cinematic.library_note", "Local only · YouTube Audio Library · Pixabay Music. A catalogue listing is not proof of commercial rights.")}</p>
+      <div class="fields"><label>${tr("cinematic.search_library", "Search library")}<input id="ce_lib_query" type="search" value="${esc(query)}" placeholder="${tr("cinematic.placeholder_title_artist", "Title, artist or source URL")}"></label><label>${tr("cinematic.genre_filter", "Genre filter")}<input id="ce_lib_genre" value="${esc(filters.genre || "")}" placeholder="${tr("cinematic.placeholder_genre", "cinematic")}"></label><label>${tr("cinematic.mood_filter", "Mood filter")}<input id="ce_lib_mood" value="${esc(filters.mood || "")}" placeholder="${tr("cinematic.placeholder_mood", "dramatic")}"></label><label>${tr("cinematic.min_bpm", "Min BPM")}<input id="ce_lib_min_bpm" type="number" min="0" value="${esc(filters.min_bpm || "")}"></label><label>${tr("cinematic.max_bpm", "Max BPM")}<input id="ce_lib_max_bpm" type="number" min="0" value="${esc(filters.max_bpm || "")}"></label><label>${tr("cinematic.min_seconds", "Min seconds")}<input id="ce_lib_min_duration" type="number" min="0" value="${esc(filters.min_duration || "")}"></label><label>${tr("cinematic.max_seconds", "Max seconds")}<input id="ce_lib_max_duration" type="number" min="0" value="${esc(filters.max_duration || "")}"></label><button type="button" class="btn sm" data-ce="search">${tr("cinematic.filter_library", "Filter library")}</button></div>
+      <label>${tr("cinematic.import_composition", "Import permitted composition")}<input id="ce_lib_file" type="file" accept="audio/mpeg,audio/wav,audio/mp4,audio/flac,audio/ogg,.mp3,.wav,.m4a,.flac,.ogg"></label>
+      <div class="fields" style="margin-top:10px"><label>${tr("cinematic.genres", "Genres")}<input id="ce_lib_genres" type="text" placeholder="${tr("cinematic.placeholder_genres", "cinematic, orchestral")}"></label><label>${tr("cinematic.moods", "Moods")}<input id="ce_lib_moods" type="text" placeholder="${tr("cinematic.placeholder_mood", "dramatic")}"></label><label>${tr("cinematic.source_url", "Source URL")}<input id="ce_lib_source" type="text" placeholder="${tr("cinematic.placeholder_source", "Official source page")}"></label><label>${tr("cinematic.license_url", "License URL")}<input id="ce_lib_license" type="text" placeholder="${tr("cinematic.placeholder_license", "License page")}"></label><label>${tr("cinematic.license_type", "License type")}<input id="ce_lib_type" type="text" placeholder="${tr("cinematic.placeholder_verified", "Only if verified")}"></label><label>${tr("cinematic.attribution", "Attribution")}<input id="ce_lib_attribution" type="text" placeholder="${tr("cinematic.placeholder_attribution", "Required attribution, if any")}"></label><label>${tr("cinematic.allowed_platforms", "Allowed platforms")}<input id="ce_lib_platforms" type="text" placeholder="${tr("cinematic.placeholder_platforms", "youtube, instagram")}"></label><label>${tr("cinematic.content_id", "Content ID")}<select id="ce_lib_content_id"><option value="unknown">${tr("cinematic.filter_unknown", "Unknown")}</option><option value="known">${tr("cinematic.filter_known", "Known")}</option><option value="registered">${tr("cinematic.filter_registered", "Registered")}</option></select></label></div>
+      <label style="margin-top:10px;flex-direction:row;align-items:center;color:var(--text)"><input id="ce_lib_confirm" type="checkbox"> ${tr("cinematic.confirmed_permission", "I confirmed this track's permission for the intended use")}</label>
+      <button type="button" class="btn sm" data-ce="import">${tr("cinematic.import", "Import and analyze")}</button>
+      <div style="margin-top:12px">${tracks.length ? tracks.map(t => `<div class="cin-track"><div><b>${esc(t.title || t.file_name)}</b><br><small>${esc(t.artist || tr("cinematic.unknown_artist", "Unknown artist"))} · ${t.duration ? fmt(t.duration) : tr("cinematic.duration_unknown", "duration unknown")} · ${t.analysis?.bpm_estimate ? `${t.analysis.bpm_estimate} BPM` : tr("cinematic.bpm_fallback", "BPM fallback")}</small><br><small>${t.license?.status === "confirmed" ? tr("cinematic.permission_confirmed", "Permission confirmed by user") : tr("cinematic.license_unknown", "Licence unknown — excluded from Auto")}</small></div><div class="row"><button type="button" class="btn sm" data-ce="fav" data-id="${esc(t.id)}">${t.favorite ? tr("cinematic.unfavorite", "Unfavorite") : tr("cinematic.favorite", "Favorite")}</button><button type="button" class="btn sm ghost" data-ce="edit-track" data-id="${esc(t.id)}">${tr("cinematic.edit_tags", "Edit tags")}</button><button type="button" class="btn sm ghost" data-ce="reanalyze" data-id="${esc(t.id)}">${tr("cinematic.analyze", "Analyze")}</button><button type="button" class="btn sm danger" data-ce="delete-track" data-id="${esc(t.id)}">${tr("cinematic.delete", "Delete")}</button></div><audio controls preload="none" src="/media/music/${esc(t.id)}"></audio></div>`).join("") : `<p class="cin-note">${tr("cinematic.no_tracks", "No tracks yet. Import one permitted local composition to enable Auto selection.")}</p>`}</div>
     </section>
-  </div><section class="card" style="margin-top:18px"><h2>Your Cinematic Edits</h2><div class="cin-jobs" id="ce_jobs">${ce.jobs.length ? ce.jobs.map(ceJobHtml).join("") : `<p class="cin-note">No cinematic edits yet.</p>`}</div></section>`;
+  </div><section class="card" style="margin-top:18px"><h2>${tr("cinematic.jobs", "Your Cinematic Edits")}</h2><div class="cin-jobs" id="ce_jobs">${ce.jobs.length ? ce.jobs.map(ceJobHtml).join("") : `<p class="cin-note">${tr("cinematic.no_jobs", "No cinematic edits yet.")}</p>`}</div></section>`;
+  const ceLabel = (id, key, fallback) => { const control = $(id), label = control?.closest("label"); if (!label) return; const node = [...label.childNodes].find(x => x.nodeType === Node.TEXT_NODE && x.textContent.trim()); if (node) node.textContent = tr(key, fallback) + " "; };
+  [["#ce_music_file", "cinematic.music_file", "Music file"], ["#ce_lib_query", "cinematic.search_library", "Search library"], ["#ce_lib_genre", "cinematic.genre_filter", "Genre filter"], ["#ce_lib_mood", "cinematic.mood_filter", "Mood filter"], ["#ce_lib_min_bpm", "cinematic.min_bpm", "Min BPM"], ["#ce_lib_max_bpm", "cinematic.max_bpm", "Max BPM"], ["#ce_lib_min_duration", "cinematic.min_seconds", "Min seconds"], ["#ce_lib_max_duration", "cinematic.max_seconds", "Max seconds"], ["#ce_lib_file", "cinematic.import_composition", "Import permitted composition"], ["#ce_lib_genres", "cinematic.genres", "Genres"], ["#ce_lib_moods", "cinematic.moods", "Moods"], ["#ce_lib_source", "cinematic.source_url", "Source URL"], ["#ce_lib_license", "cinematic.license_url", "License URL"], ["#ce_lib_type", "cinematic.license_type", "License type"], ["#ce_lib_attribution", "cinematic.attribution", "Attribution"], ["#ce_lib_platforms", "cinematic.allowed_platforms", "Allowed platforms"], ["#ce_lib_content_id", "cinematic.content_id", "Content ID"], ["#ce_lib_confirm", "cinematic.confirmed_permission", "I confirmed this track's permission for the intended use"]].forEach(([id, key, fallback]) => ceLabel(id, key, fallback));
+  $$("[data-ce='search']").forEach(x => x.textContent = tr("cinematic.filter_library", "Filter library"));
+  $$("[data-ce='import']").forEach(x => x.textContent = tr("cinematic.import", "Import and analyze"));
   $("#ce_music_source").value = source;
   $("#ce_genre").value = "";
   $("#ce_lib_query").value = query;
@@ -3563,13 +3681,34 @@ function drawCinematic() {
   $("#ce_focus_text_wrap").hidden = $("#ce_focus").value === "auto";
   cePreviewCaption();
 }
+function ceMessage(value) {
+  if (UI_LOCALE !== "ru" || typeof value !== "string") return value;
+  const exact = {
+    "Manually selected from the local music library.": tr("cinematic.selection_manual", "Manually selected from the local music library."),
+    "Local coherent event sequence; semantic AI review was not used.": tr("cinematic.selection_local", "Local coherent event sequence; semantic AI review was not used."),
+    "No confirmed, platform-compatible local track is long enough; choose Upload or Original Audio.": tr("cinematic.selection_auto_empty", "No confirmed, platform-compatible local track is long enough; choose Upload or Original Audio."),
+    "Auto music did not find a confirmed eligible library track; Original Audio was used.": tr("cinematic.auto_original_warning", "Auto music did not find a confirmed eligible library track; Original Audio was used."),
+    "Music rhythm confidence was too low for beat cuts; natural scene pacing was used.": tr("cinematic.rhythm_warning", "Music rhythm confidence was too low for beat cuts; natural scene pacing was used."),
+    "The selected event sequence ended before the requested duration; no unapproved neighboring shots were added.": tr("cinematic.short_warning", "The selected event sequence ended before the requested duration; no unapproved neighboring shots were added."),
+    "music_library_empty_or_not_eligible": tr("cinematic.music_library_empty_code", "No suitable confirmed track is available in the music library."),
+    "Beat Sync was disabled because music boundaries would reduce the approved material below the requested duration.": tr("cinematic.beat_disabled_warning", "Beat Sync was disabled because music boundaries would reduce the approved material below the requested duration."),
+    "Smooth transitions were disabled because their overlap would exceed the approved source capacity.": tr("cinematic.transition_disabled_warning", "Smooth transitions were disabled because their overlap would exceed the approved source capacity.")
+  };
+  return exact[value] || value;
+}
+function ceEditModeLabel(value) {
+  const labels = {cinematic_story: tr("cinematic.story", "Cinematic Story"), character_edit: tr("cinematic.character", "Character Edit"), action_edit: tr("cinematic.action", "Action Edit"), emotional_edit: tr("cinematic.emotional", "Emotional Edit"), phonk_aura: tr("cinematic.phonk", "Phonk / Aura Edit")};
+  return labels[value] || value || tr("cinematic.title", "Cinematic Edit");
+}
 function ceJobHtml(j) {
   const done = j.status === "done", running = ["queued", "running"].includes(j.status), pct = Math.round((j.progress || 0) * 100);
   const files = j.files || {};
   const selected = j.selected_music || {}, segment = selected.segment || {};
-  const musicLine = j.status === "music_required" ? `<p class="bad">Music required: choose a confirmed Library track or Upload music. Original Audio is available only when explicitly selected.</p>` : selected.title ? `<p class="cin-note">Music: <b>${esc(selected.title)}</b>${segment.start !== undefined ? ` · used ${fmt(segment.start)}–${fmt(segment.end)} s` : ""}</p>` : "";
-  const concept = j.edit_concept || j.target_character ? `<p class="cin-note"><b>${esc(j.edit_mode || "cinematic")}</b>${j.target_character ? ` · focus: ${esc(j.target_character)}` : ""}${j.edit_concept ? `<br>${esc(j.edit_concept)}` : ""}</p>` : "";
-  return `<article class="cin-job"><div>${done && files.video ? `<video controls preload="metadata" src="${esc(files.video)}"></video>` : `<div class="empty" style="min-height:220px;display:grid;place-items:center">${esc(j.stage || j.status)}</div>`}</div><div><h3>${esc(j.source?.name || "Cinematic edit")}</h3><p class="cin-note">${esc(j.stage || j.status)} · ${pct}%${j.selection_reason ? `<br>${esc(j.selection_reason)}` : ""}</p>${concept}${musicLine}${running ? `<div class="bar"><i style="width:${pct}%"></i></div><button type="button" class="btn sm danger" data-ce="cancel" data-id="${esc(j.id)}">Cancel</button>` : ""}${j.status === "error" ? `<p class="bad">${esc(j.error || "The edit stopped.")}</p>` : ""}${j.warnings?.length ? `<p class="cin-note">${j.warnings.map(esc).join("<br>")}</p>` : ""}<div class="cin-actions">${done && files.video ? `<a class="btn sm primary" href="${esc(files.video)}?download=1">Download MP4</a><a class="btn sm" href="${esc(files.plan)}" target="_blank" rel="noopener">edit-plan.json</a><a class="btn sm" href="${esc(files.music_analysis)}" target="_blank" rel="noopener">music-analysis.json</a><a class="btn sm" href="${esc(files.scenes)}" target="_blank" rel="noopener">Scene analysis</a>${files.events ? `<a class="btn sm" href="${esc(files.events)}" target="_blank" rel="noopener">Event analysis</a>` : ""}${files.ai_scene_selection ? `<a class="btn sm" href="${esc(files.ai_scene_selection)}" target="_blank" rel="noopener">AI scene review</a>` : ""}${files.captions_ass ? `<a class="btn sm" href="${esc(files.captions_ass)}" target="_blank" rel="noopener">ASS</a>` : ""}${files.captions_srt ? `<a class="btn sm" href="${esc(files.captions_srt)}" target="_blank" rel="noopener">SRT</a>` : ""}${files.captions_timeline ? `<a class="btn sm" href="${esc(files.captions_timeline)}" target="_blank" rel="noopener">Caption timeline</a>` : ""}${files.quality_gate ? `<a class="btn sm" href="${esc(files.quality_gate)}" target="_blank" rel="noopener">Quality gate</a>` : ""}${files.license ? `<a class="btn sm" href="${esc(files.license)}" target="_blank" rel="noopener">License</a>` : ""}${files.metrics ? `<a class="btn sm" href="${esc(files.metrics)}" target="_blank" rel="noopener">Metrics</a>` : ""}<button type="button" class="btn sm" data-ce="rerender" data-id="${esc(j.id)}">Render again</button>` : ""}</div></div></article>`;
+  const stage = j.status === "music_required" ? tr("cinematic.music_required", "Music required: choose a confirmed Library track or Upload music. Original Audio is available only when explicitly selected.")
+    : j.status === "cancelled" ? tr("cinematic.cancelled", "Cancelled") : j.status === "done" ? tr("cinematic.ready", "Ready") : j.stage || j.status;
+  const musicLine = j.status === "music_required" ? `<p class="bad">${stage}</p>` : selected.title ? `<p class="cin-note">${tr("cinematic.music", "Music")}: <b>${esc(selected.title)}</b>${segment.start !== undefined ? ` · ${tr("cinematic.used", "used")} ${fmt(segment.start)}–${fmt(segment.end)} ${tr("common.seconds", "s")}` : ""}</p>` : "";
+  const concept = j.edit_concept || j.target_character || j.edit_mode ? `<p class="cin-note"><b>${esc(ceEditModeLabel(j.edit_mode))}</b>${j.target_character ? ` · ${tr("cinematic.focus_short", "focus")}: ${esc(j.target_character)}` : ""}${j.edit_concept ? `<br>${esc(ceMessage(j.edit_concept))}` : ""}</p>` : "";
+  return `<article class="cin-job"><div>${done && files.video ? `<video controls preload="metadata" src="${esc(files.video)}"></video>` : `<div class="empty" style="min-height:220px;display:grid;place-items:center">${esc(stage)}</div>`}</div><div><h3>${esc(j.source?.name || "Cinematic edit")}</h3><p class="cin-note">${esc(stage)} · ${pct}%${j.selection_reason ? `<br>${esc(ceMessage(j.selection_reason))}` : ""}</p>${concept}${musicLine}${running ? `<div class="bar"><i style="width:${pct}%"></i></div><button type="button" class="btn sm danger" data-ce="cancel" data-id="${esc(j.id)}">${tr("common.cancel", "Cancel")}</button>` : ""}${j.status === "error" ? `<p class="bad">${esc(j.error || tr("status.stopped", "The edit stopped."))}</p>` : ""}${j.warnings?.length ? `<p class="cin-note">${j.warnings.map(x => esc(ceMessage(x))).join("<br>")}</p>` : ""}<div class="cin-actions">${done && files.video ? `<a class="btn sm primary" href="${esc(files.video)}?download=1">${tr("cinematic.download", "Download MP4")}</a><a class="btn sm" href="${esc(files.plan)}" target="_blank" rel="noopener">edit-plan.json</a><a class="btn sm" href="${esc(files.music_analysis)}" target="_blank" rel="noopener">music-analysis.json</a><a class="btn sm" href="${esc(files.scenes)}" target="_blank" rel="noopener">${tr("cinematic.scene_analysis", "Scene analysis")}</a>${files.events ? `<a class="btn sm" href="${esc(files.events)}" target="_blank" rel="noopener">${tr("cinematic.event_analysis", "Event analysis")}</a>` : ""}${files.ai_scene_selection ? `<a class="btn sm" href="${esc(files.ai_scene_selection)}" target="_blank" rel="noopener">${tr("cinematic.ai_scene_review", "AI scene review")}</a>` : ""}${files.captions_ass ? `<a class="btn sm" href="${esc(files.captions_ass)}" target="_blank" rel="noopener">ASS</a>` : ""}${files.captions_srt ? `<a class="btn sm" href="${esc(files.captions_srt)}" target="_blank" rel="noopener">SRT</a>` : ""}${files.captions_timeline ? `<a class="btn sm" href="${esc(files.captions_timeline)}" target="_blank" rel="noopener">${tr("cinematic.caption_timeline", "Caption timeline")}</a>` : ""}${files.quality_gate ? `<a class="btn sm" href="${esc(files.quality_gate)}" target="_blank" rel="noopener">${tr("cinematic.quality_gate", "Quality gate")}</a>` : ""}${files.license ? `<a class="btn sm" href="${esc(files.license)}" target="_blank" rel="noopener">${tr("cinematic.license", "License")}</a>` : ""}${files.metrics ? `<a class="btn sm" href="${esc(files.metrics)}" target="_blank" rel="noopener">${tr("cinematic.metrics", "Metrics")}</a>` : ""}<button type="button" class="btn sm" data-ce="rerender" data-id="${esc(j.id)}">${tr("cinematic.render_again", "Render again")}</button>` : ""}</div></div></article>`;
 }
 async function loadCinematic() {
   const v = id => $(id)?.value || "";
@@ -3595,7 +3734,7 @@ function cePreviewCaption() {
   const p = $("#ce_caption_preview"); if (!p) return;
   const mode = $("#ce_caption_mode")?.value || "off", style = $("#ce_caption_style")?.value || "cinematic";
   const text = $("#ce_caption_preview_text"); if (!text) return;
-  text.textContent = mode === "off" ? "Captions off · no dialogue will be burned into the MP4." : `${style.replace("_", " / ")} · «Selected dialogue appears on the retained shots.»`;
+  text.textContent = mode === "off" ? tr("cinematic.caption_off", "Captions off · no dialogue will be burned into the MP4.") : `${style.replace("_", " / ")} · «${tr("cinematic.caption_selected", "Selected dialogue appears on the retained shots.")}»`;
   p.style.color = `#${($("#ce_caption_color")?.value || "FFF8EE").replace(/^#/, "")}`;
   p.style.borderColor = `#${($("#ce_caption_highlight")?.value || "FFD27A").replace(/^#/, "")}`;
   p.style.fontSize = `${Math.max(14, Math.min(28, Number($("#ce_caption_size")?.value || 96) / 5))}px`;
@@ -3610,9 +3749,9 @@ async function cePreviewMusic() {
   const note = $("#ce_music_status"); if (!note) return;
   try {
     const p = await api("/api/cinematic/music-preview", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(ceFormOptions())});
-    if (p.status === "selected") note.innerHTML = `Selected music: <b>${esc(p.title)}</b> · used ${fmt(p.segment.start)}–${fmt(p.segment.end)} s before rendering.`;
-    else if (p.status === "music_required") note.textContent = "Music required: Auto found no confirmed local track long enough. Choose Library or Upload; Original Audio is explicit only.";
-    else note.textContent = "Original Audio explicitly selected; no music track will be mixed.";
+    if (p.status === "selected") note.innerHTML = `${tr("cinematic.selected_music", "Selected music")}: <b>${esc(p.title)}</b> · ${tr("cinematic.used", "used")} ${fmt(p.segment.start)}–${fmt(p.segment.end)} s ${tr("cinematic.before_rendering", "before rendering")}.`;
+    else if (p.status === "music_required") note.textContent = tr("cinematic.music_required_auto", "Music required: Auto found no confirmed local track long enough. Choose Library or Upload; Original Audio is explicit only.");
+    else note.textContent = tr("cinematic.original_audio_note", "Original Audio explicitly selected; no music track will be mixed.");
   } catch (e) { note.textContent = `Music preview unavailable: ${e.message}`; }
 }
 async function ceCreate() {
@@ -3661,7 +3800,7 @@ function fromPath(path) {
   const sty = path.match(/^\/app\/styles(?:\/([\w-]{1,40}))?\/?$/);       // the list, a new style, or one being edited
   if (sty) return ["styles", sty[1] || ""];
   if (/^\/app\/(settings\/ai|usage)\/?$/.test(path)) return ["usage"];      // where the key and AI usage used to be
-  const st = path.match(/^\/app\/settings(?:\/(profile|security|apps|speech|storage|updates|app))?\/?$/);
+  const st = path.match(/^\/app\/settings(?:\/(language|profile|security|apps|speech|storage|updates|app))?\/?$/);
   if (st) return ["settings", st[1] || null];
   if (/^\/app\/live\/mine\/?$/.test(path)) return ["discover", "mine"];
   const cpm = path.match(/^\/app\/campaigns\/([\w-]{1,40})\/?$/);
@@ -6034,14 +6173,27 @@ document.addEventListener("change", async e => {
 /* ============================================================ settings */
 // With sign-in off there is no profile or password to manage. The AI section is for whoever runs the server.
 // The AI service, model and key are set on the AI page itself (next to what the AI has been used for), not here.
+document.addEventListener("change", async e => {
+  const t = e.target;
+  if (t.id !== "ui_locale") return;
+  try {
+    await send("/api/settings", {ui_locale: t.value}, "PUT");
+    S.status.locale = t.value;
+    setUiLocale(t.value);
+    drawShell();
+    if (S.view === "settings") await drawSettings();
+    toast(tr("settings.language_saved", "Interface language saved."), "ok");
+  } catch (err) { toast(err.message, "bad"); }
+});
 const setTabs = () => [
-  ...(S.status.accounts === false ? [] : [["profile", "Profile", "user", "Your name, email and how you sign in"],
-                                          ["security", "Security", "lock", "Password and signing out"]]),
-  ["apps", "Connected apps", "plug", "Where your clips get posted"],
-  ...(S.status.user?.is_admin ? [["speech", "Speech models", "chat", "The languages PeakCut can hear"],
-                                 ["storage", "Storage", "folder", "Where videos and clips are kept"],
-                                 ["updates", "Updates", "up", "Get new versions"]] : []),
-  ...(S.status.user?.is_admin && S.status.accounts === false ? [["app", "App", "plug", "Open PeakCut from an icon"]] : [])];
+  ["language", tr("settings.language_tab", "Language"), "chat", tr("settings.language_tab_help", "PeakCut interface language")],
+  ...(S.status.accounts === false ? [] : [["profile", tr("settings.profile", "Profile"), "user", tr("settings.profile_help", "Your name, email and how you sign in")],
+                                          ["security", tr("settings.security", "Security"), "lock", tr("settings.security_help", "Password and signing out")]]),
+  ["apps", tr("settings.apps", "Connected apps"), "plug", tr("settings.apps_help", "Where your clips get posted")],
+  ...(S.status.user?.is_admin ? [["speech", tr("settings.speech", "Speech models"), "chat", tr("settings.speech_help", "The languages PeakCut can hear")],
+                                 ["storage", tr("settings.storage", "Storage"), "folder", tr("settings.storage_help", "Where videos and clips are kept")],
+                                 ["updates", tr("settings.updates", "Updates"), "up", tr("settings.updates_help", "Get new versions")]] : []),
+  ...(S.status.user?.is_admin && S.status.accounts === false ? [["app", tr("settings.app", "App"), "plug", tr("settings.app_help", "Open PeakCut from an icon")] ] : [])];
 async function drawSettings() {
   const box = $("#sform"); if (!box) return;
   const tab = S.stab || setTabs()[0][0], me = S.status.user;
@@ -6050,70 +6202,76 @@ async function drawSettings() {
     <div class="set-body" id="setbody"><div class="set-load">Loading…</div></div></div>`;
   const body = $("#setbody");
   try {
+    if (tab === "language") {
+      const current = S.status.locale || UI_LOCALE;
+      body.innerHTML = `<section class="set-sec"><h2>${tr("settings.language", "Interface language")}</h2><p class="help">${tr("settings.language_help", "This setting changes PeakCut's interface only. It does not change ASR, metadata or caption language.")}</p>
+        <label class="f" for="ui_locale">${tr("settings.language", "Interface language")}<select id="ui_locale"><option value="ru"${current === "ru" ? " selected" : ""}>${tr("settings.russian", "Russian")}</option><option value="en"${current === "en" ? " selected" : ""}>English</option></select></label></section>`;
+      return;
+    }
     if (tab === "app") {
-      body.innerHTML = `<section class="set-sec"><h2>PeakCut as an app</h2><p class="help">Put a PeakCut icon on your desktop and in the Start menu. Clicking it starts PeakCut and opens it in its own window, so you never have to run a command again.</p>
-        <div class="row" style="margin:14px 0"><img src="/brand/peakcut.ico" alt="" width="40" height="40"><button class="btn primary" data-act="mkicon">${ic("down")}Create the PeakCut icon</button></div>
-        <p class="help">To keep it on the Windows taskbar: open the Start menu, type PeakCut, right-click it and choose <b>Pin to taskbar</b>. If you move the PeakCut folder, create the icon again.</p>
-        <h2 style="margin-top:28px">Close PeakCut</h2><p class="help">Opened from the icon, PeakCut runs quietly in the background. Close it here.</p>
-        <div class="row" style="margin-top:12px"><button class="btn" data-act="quitapp">Close PeakCut</button></div></section>`;
+      body.innerHTML = `<section class="set-sec"><h2>${tr("settings.app_title", "PeakCut as an app")}</h2><p class="help">${tr("settings.app_help_long", "Put a PeakCut icon on your desktop and in the Start menu. Clicking it starts PeakCut and opens it in its own window, so you never have to run a command again.")}</p>
+        <div class="row" style="margin:14px 0"><img src="/brand/peakcut.ico" alt="" width="40" height="40"><button class="btn primary" data-act="mkicon">${ic("down")}${tr("settings.create_icon", "Create the PeakCut icon")}</button></div>
+        <p class="help">${tr("settings.taskbar_help", "To keep it on the Windows taskbar: open the Start menu, type PeakCut, right-click it and choose Pin to taskbar. If you move the PeakCut folder, create the icon again.")}</p>
+        <h2 style="margin-top:28px">${tr("settings.close_peakcut", "Close PeakCut")}</h2><p class="help">${tr("settings.close_peakcut_help", "Opened from the icon, PeakCut runs quietly in the background. Close it here.")}</p>
+        <div class="row" style="margin-top:12px"><button class="btn" data-act="quitapp">${tr("settings.close", "Close PeakCut")}</button></div></section>`;
     }
     if (tab === "updates") {
       const u = await api("/api/update");
-      body.innerHTML = `<section class="set-sec"><h2>Updates</h2><p class="help">PeakCut looks for a new version on GitHub every minute. Updating keeps your settings, keys, videos and clips.</p>
-        <dl class="kv"><div><dt>This version</dt><dd>${esc(u.version || "unknown")}</dd></div><div><dt>Newer version</dt><dd>${u.found ? `<span class="pill warn">Available</span>` : `<span class="pill ok">${ic("check")}You're up to date</span>`}</dd></div></dl>
-        ${u.found && u.can ? `<div class="row" style="margin:14px 0"><button class="btn primary" data-act="updnow">Update now</button></div>` : ""}
-        <label class="sw" style="margin-top:16px"><input type="checkbox" id="upd_auto" ${u.auto ? "checked" : ""} ${u.can || u.auto ? "" : "disabled"}>Update automatically</label>
-        <p class="help" style="margin-top:8px">${u.can ? "When it's on, a new version is installed by itself while nothing is recording or being made, and PeakCut restarts. Off by default." : esc(u.why)}</p></section>`;
+      body.innerHTML = `<section class="set-sec"><h2>${tr("settings.updates", "Updates")}</h2><p class="help">${tr("settings.updates_help_long", "PeakCut looks for a new version on GitHub every minute. Updating keeps your settings, keys, videos and clips.")}</p>
+        <dl class="kv"><div><dt>${tr("settings.this_version", "This version")}</dt><dd>${esc(u.version || "unknown")}</dd></div><div><dt>${tr("settings.newer_version", "Newer version")}</dt><dd>${u.found ? `<span class="pill warn">${tr("settings.available", "Available")}</span>` : `<span class="pill ok">${ic("check")}${tr("settings.up_to_date", "You're up to date")}</span>`}</dd></div></dl>
+        ${u.found && u.can ? `<div class="row" style="margin:14px 0"><button class="btn primary" data-act="updnow">${tr("settings.update_now", "Update now")}</button></div>` : ""}
+        <label class="sw" style="margin-top:16px"><input type="checkbox" id="upd_auto" ${u.auto ? "checked" : ""} ${u.can || u.auto ? "" : "disabled"}>${tr("settings.update_auto", "Update automatically")}</label>
+        <p class="help" style="margin-top:8px">${u.can ? tr("settings.update_auto_help", "When it's on, a new version is installed by itself while nothing is recording or being made, and PeakCut restarts. Off by default.") : esc(u.why)}</p></section>`;
     }
     if (tab === "speech") {
       const r = await api("/api/speech");
-      body.innerHTML = `<section class="set-sec"><h2>Speech models</h2><p class="help">PeakCut writes down what is said in a video with a speech model that runs on this computer, one per language. English is always here. Add another language to clip videos spoken in it, then choose that language when adding a video, or on a creator's Setup.</p>
+      body.innerHTML = `<section class="set-sec"><h2>${tr("settings.speech_title", "Speech models")}</h2><p class="help">${tr("settings.speech_help_long", "PeakCut writes down what is said in a video with a speech model that runs on this computer, one per language. English is always here. Add another language to clip videos spoken in it, then choose that language when adding a video, or on a creator's Setup.")}</p>
         <div class="speech-list">${r.models.map(m => `<div class="speech-row"><div class="speech-info"><b>${esc(langName(m.lang))}</b><span class="sub">${esc(m.size_mb)} MB · ${esc(m.credit)}</span>
-            ${m.state === "downloading" ? `<div class="bar"><i style="width:${m.percent}%"></i></div>` : ""}${m.error && m.state === "missing" ? `<span class="sub" style="color:var(--bad)">The last download failed. Check the internet connection and try again.</span>` : ""}</div>
-          <div class="row">${m.state === "ready" ? `<span class="pill ok">${ic("check")}Ready</span>${m.default ? "" : `<button class="btn sm ghost" data-act="speechdel" data-v="${esc(m.lang)}">${ic("trash")}Remove</button>`}`
-            : m.state === "downloading" ? `<span class="pill">Downloading ${esc(m.percent)}%</span>`
-            : `<button class="btn sm" data-act="speechget" data-v="${esc(m.lang)}">${ic("down")}Download</button>`}</div></div>`).join("")}</div></section>`;
+            ${m.state === "downloading" ? `<div class="bar"><i style="width:${m.percent}%"></i></div>` : ""}${m.error && m.state === "missing" ? `<span class="sub" style="color:var(--bad)">${tr("settings.download_failed", "The last download failed. Check the internet connection and try again.")}</span>` : ""}</div>
+          <div class="row">${m.state === "ready" ? `<span class="pill ok">${ic("check")}${tr("common.ready", "Ready")}</span>${m.default ? "" : `<button class="btn sm ghost" data-act="speechdel" data-v="${esc(m.lang)}">${ic("trash")}${tr("settings.remove", "Remove")}</button>`}`
+            : m.state === "downloading" ? `<span class="pill">${tr("settings.downloading", "Downloading")} ${esc(m.percent)}%</span>`
+            : `<button class="btn sm" data-act="speechget" data-v="${esc(m.lang)}">${ic("down")}${tr("settings.download", "Download")}</button>`}</div></div>`).join("")}</div></section>`;
       clearTimeout(S.speechTimer);
       if (r.models.some(m => m.state === "downloading")) S.speechTimer = setTimeout(() => { if (S.stab === "speech" && $("#sform")) drawSettings(); }, 1500);
       else if (S.speechTimer) { S.speechTimer = null; S.status = await api("/api/status"); }
     }
     if (tab === "profile") {
       const joined = me.created_at ? new Date(me.created_at * 1000).toLocaleDateString([], {day: "numeric", month: "long", year: "numeric"}) : "";
-      body.innerHTML = `<section class="set-sec"><h2>Profile</h2>
+      body.innerHTML = `<section class="set-sec"><h2>${tr("settings.profile_title", "Profile")}</h2>
         <div class="prof">${meAvatar(me).replace('class="avatar me-pic"', 'class="avatar prof-pic"')}<div><b>${esc(me.name)}</b><span>${esc(me.email)}</span></div></div>
-        <dl class="kv"><div><dt>Email</dt><dd>${esc(me.email)} ${me.verified === false ? `<span class="pill warn">Not confirmed</span>` : `<span class="pill ok">Confirmed</span>`}</dd></div>
-          <div><dt>Sign-in method</dt><dd>${me.google ? `Google${me.has_password ? " and password" : ""}` : "Email and password"}</dd></div>
-          <div><dt>Account type</dt><dd>${me.is_admin ? "Admin" : "Standard"}</dd></div>
-          ${joined ? `<div><dt>Member since</dt><dd>${joined}</dd></div>` : ""}</dl>
-        ${me.google ? `<p class="sub">Your name and picture come from your Google account.</p>` : ""}</section>`;
+        <dl class="kv"><div><dt>${tr("settings.email", "Email")}</dt><dd>${esc(me.email)} ${me.verified === false ? `<span class="pill warn">${tr("settings.not_confirmed", "Not confirmed")}</span>` : `<span class="pill ok">${tr("settings.confirmed", "Confirmed")}</span>`}</dd></div>
+          <div><dt>${tr("settings.signin_method", "Sign-in method")}</dt><dd>${me.google ? `Google${me.has_password ? " + " + tr("settings.password", "password") : ""}` : tr("settings.email_password", "Email and password")}</dd></div>
+          <div><dt>${tr("settings.account_type", "Account type")}</dt><dd>${me.is_admin ? tr("settings.admin", "Admin") : tr("settings.standard", "Standard")}</dd></div>
+          ${joined ? `<div><dt>${tr("settings.member_since", "Member since")}</dt><dd>${joined}</dd></div>` : ""}</dl>
+        ${me.google ? `<p class="sub">${tr("settings.google_profile", "Your name and picture come from your Google account.")}</p>` : ""}</section>`;
     }
     if (tab === "security") {
-      body.innerHTML = `<section class="set-sec"><h2>Password</h2><p class="help">${me.has_password ? "Change the password you use to sign in. Other devices are signed out when you do." : me.google ? "You sign in with Google. You can also set a password, to sign in with your email." : ""}</p>
-          <div class="fields narrow">${me.has_password ? `<label class="f">Current password<input id="pw_cur" type="password" autocomplete="current-password"></label>` : ""}
-            <label class="f">${me.has_password ? "New password" : "Password"}<input id="pw_new" type="password" autocomplete="new-password" placeholder="At least 8 characters"></label></div>
-          <div class="row" style="margin-top:14px"><button class="btn primary" data-act="pwsave">${me.has_password ? "Change password" : "Set password"}</button>
-            ${me.has_password ? `<a class="btn ghost" href="/reset">Forgot it?</a>` : ""}</div></section>
-        <section class="set-sec"><h2>Sessions</h2><p class="help">Sign out on this device.</p>
-          <button class="btn" data-act="logout">${ic("signout")}Sign out</button></section>
-        <section class="set-sec"><h2 style="color:var(--bad)">Delete account</h2><p class="help">Removes your account and everything in it for good: creators, recordings, videos, clips and history.</p>
-          <button class="btn danger" data-act="delaccount">${ic("trash")}Delete my account</button></section>`;
+      body.innerHTML = `<section class="set-sec"><h2>${tr("settings.password_title", "Password")}</h2><p class="help">${me.has_password ? tr("settings.password_change_help", "Change the password you use to sign in. Other devices are signed out when you do.") : me.google ? tr("settings.google_password_help", "You sign in with Google. You can also set a password, to sign in with your email.") : ""}</p>
+          <div class="fields narrow">${me.has_password ? `<label class="f">${tr("settings.current_password", "Current password")}<input id="pw_cur" type="password" autocomplete="current-password"></label>` : ""}
+            <label class="f">${me.has_password ? tr("settings.new_password", "New password") : tr("settings.password", "Password")}<input id="pw_new" type="password" autocomplete="new-password" placeholder="${tr("settings.password_placeholder", "At least 8 characters")}"></label></div>
+          <div class="row" style="margin-top:14px"><button class="btn primary" data-act="pwsave">${me.has_password ? tr("settings.change_password", "Change password") : tr("settings.set_password", "Set password")}</button>
+            ${me.has_password ? `<a class="btn ghost" href="/reset">${tr("settings.forgot", "Forgot it?")}</a>` : ""}</div></section>
+        <section class="set-sec"><h2>${tr("settings.sessions", "Sessions")}</h2><p class="help">${tr("settings.signout_device", "Sign out on this device.")}</p>
+          <button class="btn" data-act="logout">${ic("signout")}${tr("settings.sign_out", "Sign out")}</button></section>
+        <section class="set-sec"><h2 style="color:var(--bad)">${tr("settings.delete_account", "Delete account")}</h2><p class="help">${tr("settings.delete_account_help", "Removes your account and everything in it for good: creators, recordings, videos, clips and history.")}</p>
+          <button class="btn danger" data-act="delaccount">${ic("trash")}${tr("settings.delete_my_account", "Delete my account")}</button></section>`;
     }
     if (tab === "storage") {
       const s = S.stor = await api("/api/storage");
       const usedPct = s.total_gb ? Math.min(100, Math.max(1, 100 * (s.total_gb - s.free_gb) / s.total_gb)) : 0;
       const gb = n => `${Number(n).toLocaleString(undefined, {maximumFractionDigits: 1})} GB`;
-      body.innerHTML = `<section class="set-sec"><h2>Storage</h2><p class="help">Everything PeakCut keeps is in one folder: your videos, clips, recordings, creators and settings. You can open it, back it up, or move it to a drive with more room.</p>
-          ${s.full ? `<div class="note" style="margin:0 0 14px">${ic("warn")}<span><b>This drive is almost full, so PeakCut can't take new videos.</b> ${gb(s.free_gb)} free on ${esc(s.drive)}; it needs at least ${gb(s.min_free_gb)}. Free up space, or move the folder to another drive below.</span></div>` : ""}
-          ${s.pending ? `<div class="note" style="margin:0 0 14px">${ic("clock")}<span><b>The folder changes to ${esc(s.pending)} the next time PeakCut starts.</b> Close PeakCut and start it again. <button class="btn sm ghost" data-act="storcancel">Undo</button></span></div>` : ""}
-          <div class="stor-path"><code>${esc(s.path)}</code>${s.local ? `<button class="btn" data-act="storopen">${ic("folder")}Open folder</button>` : ""}</div>
+      body.innerHTML = `<section class="set-sec"><h2>${tr("settings.storage_title", "Storage")}</h2><p class="help">${tr("settings.storage_help_long", "Everything PeakCut keeps is in one folder: your videos, clips, recordings, creators and settings. You can open it, back it up, or move it to a drive with more room.")}</p>
+          ${s.full ? `<div class="note" style="margin:0 0 14px">${ic("warn")}<span><b>${tr("settings.drive_full", "This drive is almost full, so PeakCut can't take new videos.")}</b> ${gb(s.free_gb)} free on ${esc(s.drive)}; it needs at least ${gb(s.min_free_gb)}. Free up space, or move the folder to another drive below.</span></div>` : ""}
+          ${s.pending ? `<div class="note" style="margin:0 0 14px">${ic("clock")}<span><b>${tr("settings.drive_pending", "The folder changes to the next time PeakCut starts.")}</b> Close PeakCut and start it again. <button class="btn sm ghost" data-act="storcancel">${tr("settings.undo", "Undo")}</button></span></div>` : ""}
+          <div class="stor-path"><code>${esc(s.path)}</code>${s.local ? `<button class="btn" data-act="storopen">${ic("folder")}${tr("settings.open_folder", "Open folder")}</button>` : ""}</div>
           <div class="stor-bar ${s.full ? "low" : ""}" role="img" aria-label="${Math.round(usedPct)}% of the drive is used"><i style="width:${usedPct}%"></i></div>
-          <div class="stor-nums"><span>PeakCut uses <b>${gb(s.used_gb)}</b></span><span><b>${gb(s.free_gb)}</b> free of ${gb(s.total_gb)} on ${esc(s.drive)}</span></div>
-          ${s.fixed ? `<p class="sub" style="margin-top:16px">This folder is set with PEAKCUT_DATA in the .env file. Change it there, or remove that line to choose it here.</p>`
-            : S.storOpen ? `<div class="stor-change"><label class="f">New folder<span class="with"><input id="stor_new" placeholder="For example D:\\PeakCut" spellcheck="false" value="${esc(S.storNew || "")}">${s.local ? `<button class="btn" type="button" data-act="storpick">Browse</button>` : ""}</span></label>
-                <label class="ck"><input type="checkbox" id="stor_move" checked>Move everything that is in the current folder there too</label>
-                <p class="sub">The change happens the next time PeakCut starts, so nothing is moved while a video is being made.</p>
-                <div class="row"><button class="btn primary" data-act="storsave">Use this folder</button><button class="btn ghost" data-act="storchange">Cancel</button></div></div>`
-            : `<div class="row" style="margin-top:16px"><button class="btn" data-act="storchange">Change folder</button></div>`}</section>`;
+          <div class="stor-nums"><span>${tr("settings.used", "PeakCut uses")} <b>${gb(s.used_gb)}</b></span><span><b>${gb(s.free_gb)}</b> ${tr("settings.free_of", "free of")} ${gb(s.total_gb)} ${esc(s.drive)}</span></div>
+          ${s.fixed ? `<p class="sub" style="margin-top:16px">${tr("settings.data_env", "This folder is set with PEAKCUT_DATA in the .env file. Change it there, or remove that line to choose it here.")}</p>`
+            : S.storOpen ? `<div class="stor-change"><label class="f">${tr("settings.new_folder", "New folder")}<span class="with"><input id="stor_new" placeholder="For example D:\\PeakCut" spellcheck="false" value="${esc(S.storNew || "")}">${s.local ? `<button class="btn" type="button" data-act="storpick">${tr("settings.browse", "Browse")}</button>` : ""}</span></label>
+                <label class="ck"><input type="checkbox" id="stor_move" checked>${tr("settings.move_data", "Move everything that is in the current folder there too")}</label>
+                <p class="sub">${tr("settings.storage_restart", "The change happens the next time PeakCut starts, so nothing is moved while a video is being made.")}</p>
+                <div class="row"><button class="btn primary" data-act="storsave">${tr("settings.use_folder", "Use this folder")}</button><button class="btn ghost" data-act="storchange">${tr("common.cancel", "Cancel")}</button></div></div>`
+            : `<div class="row" style="margin-top:16px"><button class="btn" data-act="storchange">${tr("settings.change_folder", "Change folder")}</button></div>`}</section>`;
     }
     if (tab === "apps") {
       const conn = S.accounts || [];
@@ -6121,8 +6279,8 @@ async function drawSettings() {
           <div class="apptx"><b>${name}</b><span>${desc}</span>${list}</div><div class="appact">${action}</div></div>`;
       const mine = plat => conn.filter(a => (a.platform || a.label || "").toLowerCase().includes(plat));
       const listOf = arr => arr.length ? `<div class="applist">${arr.map(a => `<div class="accrow"><span class="accav" aria-hidden="true">${esc((a.name || "?").replace(/^@/, "").charAt(0))}</span>
-          <div class="acctx"><b>${esc(a.name)}</b><span>${esc(a.detail || `Added ${new Date((a.added || 0) * 1000).toLocaleDateString([], {day: "numeric", month: "short", year: "numeric"})}`)}</span></div>
-          <span class="pill ok"><i></i>Connected</span><button class="btn sm ghost" data-act="accremove" data-id="${esc(a.id)}">Disconnect</button></div>`).join("")}</div>` : "";
+          <div class="acctx"><b>${esc(a.name)}</b><span>${esc(a.detail || `${tr("settings.added", "Добавлено")} ${new Date((a.added || 0) * 1000).toLocaleDateString([], {day: "numeric", month: "short", year: "numeric"})}`)}</span></div>
+          <span class="pill ok"><i></i>${tr("settings.connected", "Connected")}</span><button class="btn sm ghost" data-act="accremove" data-id="${esc(a.id)}">${tr("settings.disconnect", "Disconnect")}</button></div>`).join("")}</div>` : "";
       const yt = '<svg viewBox="0 0 28 20" aria-hidden="true"><path fill="#FF0000" d="M27.4 3.12A3.52 3.52 0 0 0 24.92.64C22.73 0 14 0 14 0S5.27 0 3.08.64A3.52 3.52 0 0 0 .6 3.12C0 5.33 0 10 0 10s0 4.67.6 6.88a3.52 3.52 0 0 0 2.48 2.48C5.27 20 14 20 14 20s8.73 0 10.92-.64a3.52 3.52 0 0 0 2.48-2.48C28 14.67 28 10 28 10s0-4.67-.6-6.88z"/><path fill="#fff" d="M11.2 14.29 18.47 10 11.2 5.71z"/></svg>';
       const ig = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><radialGradient id="pcIgGrad" cx="28%" cy="108%" r="140%"><stop offset="0" stop-color="#FFDD55"/><stop offset=".1" stop-color="#FFDD55"/><stop offset=".5" stop-color="#FF543E"/><stop offset=".7" stop-color="#C837AB"/><stop offset="1" stop-color="#3771C8"/></radialGradient></defs><path fill="url(#pcIgGrad)" d="M12 2.16c3.2 0 3.58.01 4.85.07 1.17.05 1.8.25 2.23.41.56.22.96.48 1.38.9.42.42.68.82.9 1.38.16.42.36 1.06.41 2.23.06 1.27.07 1.65.07 4.85s-.01 3.58-.07 4.85c-.05 1.17-.25 1.8-.41 2.23a3.7 3.7 0 0 1-.9 1.38c-.42.42-.82.68-1.38.9-.42.16-1.06.36-2.23.41-1.27.06-1.65.07-4.85.07s-3.58-.01-4.85-.07c-1.17-.05-1.8-.25-2.23-.41a3.7 3.7 0 0 1-1.38-.9 3.7 3.7 0 0 1-.9-1.38c-.16-.42-.36-1.06-.41-2.23C2.17 15.58 2.16 15.2 2.16 12s.01-3.58.07-4.85c.05-1.17.25-1.8.41-2.23.22-.56.48-.96.9-1.38.42-.42.82-.68 1.38-.9.42-.16 1.06-.36 2.23-.41C8.42 2.17 8.8 2.16 12 2.16zM12 5.84a6.16 6.16 0 1 0 0 12.32 6.16 6.16 0 0 0 0-12.32zm0 10.16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.4-11.85a1.44 1.44 0 1 0 0 2.88 1.44 1.44 0 0 0 0-2.88z"/></svg>';
       const tt = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#25F4EE" transform="translate(-.7 -.7)" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.3 0 .59.04.86.13v-3.5a6.37 6.37 0 0 0-.86-.05A6.34 6.34 0 0 0 3.15 15.7a6.34 6.34 0 0 0 10.86 4.43 6.3 6.3 0 0 0 1.81-4.43V8.73a8.2 8.2 0 0 0 4.77 1.52V6.8a4.85 4.85 0 0 1-1-.11z"/><path fill="#FE2C55" transform="translate(.7 .7)" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.3 0 .59.04.86.13v-3.5a6.37 6.37 0 0 0-.86-.05A6.34 6.34 0 0 0 3.15 15.7a6.34 6.34 0 0 0 10.86 4.43 6.3 6.3 0 0 0 1.81-4.43V8.73a8.2 8.2 0 0 0 4.77 1.52V6.8a4.85 4.85 0 0 1-1-.11z"/><path fill="#000" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.3 0 .59.04.86.13v-3.5a6.37 6.37 0 0 0-.86-.05A6.34 6.34 0 0 0 3.15 15.7a6.34 6.34 0 0 0 10.86 4.43 6.3 6.3 0 0 0 1.81-4.43V8.73a8.2 8.2 0 0 0 4.77 1.52V6.8a4.85 4.85 0 0 1-1-.11z"/></svg>';
@@ -6145,24 +6303,24 @@ async function drawSettings() {
           "Until TikTok reviews your app, clips are posted as private: only the account owner sees them."]};
       const card = (pf, name, logo, bg, desc) => {
         const accs = mine(pf), st = setup?.[pf], open = S.setupOpen === pf, g = GUIDE[pf];
-        const act = (ok[pf] ? `<a class="btn sm primary" href="/oauth/${pf}/start">${ic("plus")}${accs.length ? "Add another" : "Connect"}</a>`
-            : admin ? `<button class="btn sm primary" data-act="appsetup" data-p="${pf}">${ic("cog")}Set up</button>` : `<span class="pill">Not set up on this server</span>`)
+        const act = (ok[pf] ? `<a class="btn sm primary" href="/oauth/${pf}/start">${ic("plus")}${accs.length ? tr("settings.add_another", "Add another") : tr("settings.connect", "Connect")}</a>`
+            : admin ? `<button class="btn sm primary" data-act="appsetup" data-p="${pf}">${ic("cog")}${tr("settings.setup", "Set up")}</button>` : `<span class="pill">${tr("settings.server_not_setup", "Not set up on this server")}</span>`)
           + (ok[pf] && admin ? `<button class="btn sm ghost" data-act="appsetup" data-p="${pf}" title="Change this server's ${name} app">${ic("cog")}</button>` : "");
         const panel = open && st ? `<div class="appsetup">
             <p class="sub">To let people connect ${name}, register this server once with <a href="${g[0]}" target="_blank" rel="noopener">${g[1]}</a>. It takes about five minutes.</p>
             <ol>${g[2].map(x => `<li>${x}</li>`).join("")}</ol>
-            <div class="copyrow"><code>${esc(st.redirect)}</code><button class="btn sm" data-act="copytext" data-t="${esc(st.redirect)}">${ic("copy")}Copy</button></div>
+            <div class="copyrow"><code>${esc(st.redirect)}</code><button class="btn sm" data-act="copytext" data-t="${esc(st.redirect)}">${ic("copy")}${tr("settings.copy", "Copy")}</button></div>
             ${!st.https && pf !== "youtube" ? `<p class="warnline">${name} only accepts https addresses. Put PeakCut on a domain with https (or a tunnel) and set PEAKCUT_PUBLIC_URL to it first.</p>` : ""}
             <div class="fields"><label class="f">${esc(st.id_label)}<input id="app_id" placeholder="${st.ready ? "Saved: " + esc(st.id_hint) + ". Paste a new one to replace it" : ""}" autocomplete="off" spellcheck="false"></label>
               <label class="f">${esc(st.secret_label)}<input id="app_secret" type="password" placeholder="${st.ready ? "Saved. Paste a new one to replace it" : ""}" autocomplete="off"></label>
               <label class="sw span"><input type="checkbox" id="app_open" ${st.open ? "checked" : ""}><span>Open to all users<small>Leave off until ${esc(name)} has approved the app: until then only you see Connect, and only accounts added as testers can sign in.</small></span></label>
               ${st.config_label ? `<label class="f span">${esc(st.config_label)}<input id="app_config" placeholder="${st.facebook ? "Saved: " + esc(st.config_hint) + ". Paste a new one to replace it" : "Leave empty to use Instagram's own login"}" autocomplete="off" spellcheck="false" inputmode="numeric"></label>` : ""}</div>
             <p class="sub">${g[3]}</p>
-            <div class="row"><button class="btn primary" data-act="appsave" data-p="${pf}">Save</button><button class="btn ghost" data-act="appsetup" data-p="">Close</button></div></div>` : "";
+            <div class="row"><button class="btn primary" data-act="appsave" data-p="${pf}">${tr("settings.save", "Save")}</button><button class="btn ghost" data-act="appsetup" data-p="">${tr("settings.close_panel", "Close")}</button></div></div>` : "";
         return `<div class="appcard"><div class="apphead"><span class="applogo">${logo}</span>
           <div class="apptx"><b>${name}${accs.length ? `<span class="appn">${accs.length} connected</span>` : ""}</b><span>${desc}</span></div><div class="appact">${act}</div></div>${listOf(accs)}${panel}</div>`;
       };
-      body.innerHTML = `<section class="set-sec"><h2>Connected apps</h2>${postSoon() ? soonBox() : ""}<p class="help"${postSoon() ? " hidden" : ""}>Connect the accounts PeakCut posts clips to: press Connect, sign in on the platform's own page, and you're back here. PeakCut never sees your passwords. Then pick which accounts each streamer posts to, in that creator's Setup.</p>
+      body.innerHTML = `<section class="set-sec"><h2>${tr("settings.apps_title", "Connected apps")}</h2>${postSoon() ? soonBox() : ""}<p class="help"${postSoon() ? " hidden" : ""}>${tr("settings.apps_help_long", "Connect the accounts PeakCut posts clips to: press Connect, sign in on the platform's own page, and you're back here. PeakCut never sees your passwords. Then pick which accounts each streamer posts to, in that creator's Setup.")}</p>
         <div class="apps">
           ${card("youtube", "YouTube", yt, "#FF0000", "Post clips to your channel as Shorts.")}
           ${card("instagram", "Instagram", ig, "linear-gradient(45deg,#F58529,#DD2A7B,#8134AF)", "Post clips as Reels. Needs a Creator or Business account.")}
@@ -7029,7 +7187,7 @@ $("#collapseBtn").innerHTML = ic("sidebar"); $("#menuBtn").innerHTML = ic("menu"
 try { if (localStorage.getItem("mini")) $("#app").classList.add("mini"); } catch {}
 $("#main").addEventListener("scroll", () => $(".topbar").classList.toggle("stuck", $("#main").scrollTop > 4), {passive:true});
 (async () => {
-  try { S.status = await api("/api/status"); } catch {}
+  try { S.status = await api("/api/status"); setUiLocale(S.status.locale || "ru"); } catch { setUiLocale("ru"); }
   const q = new URLSearchParams(location.search);
   if (q.get("connected") || q.get("connect_error")) {
     const ok = q.get("connected"), err = q.get("connect_error"), nm = q.get("name");
@@ -7052,7 +7210,7 @@ $("#main").addEventListener("scroll", () => $(".topbar").classList.toggle("stuck
   checkNew(true);
   if (!S.cp.rows) loadCampaigns();          // for the count beside Campaigns in the sidebar
   Promise.all([loadMyCamps(), loadTpls()]).then(() => { drawShell(); drawCampBar(); if (S.view === "campaigns") drawCampView(); if (creator() && S.ctab === "campaign") drawCreatorForm(); if ($("#add")) drawAdd(S.view === "overview" ? "hero" : "compact"); });
-  setInterval(async () => { try { S.status = await api("/api/status"); drawShell(); if (S.view === "overview") drawOverview(); checkNew(); checkRelease(); } catch {} }, 15000);
+  setInterval(async () => { try { const previous = UI_LOCALE; S.status = await api("/api/status"); setUiLocale(S.status.locale || "ru"); drawShell(); if (S.view === "overview") drawOverview(); if (previous !== UI_LOCALE && S.view === "settings") drawSettings(); checkNew(); checkRelease(); } catch {} }, 15000);
   setInterval(() => { if (S.view === "schedule" && !document.hidden && !$("#formdlg").open && !$("#schdlg").open) loadSchedule(); }, 30000);   // posts going out, views coming in
   setInterval(() => { if (S.view === "cinematic" && !document.hidden) refreshCinematicJobs(); }, 2000);
   if (S.view !== "overview" && S.view !== "discover") Promise.all([loadFamous(), loadLive()]).then(drawShell);

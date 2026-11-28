@@ -483,7 +483,16 @@ def _page(name, shared=False):
     """A page. The browser keeps its copy and asks each time whether it has changed; when it has not, the answer
     is a few bytes ("not modified") instead of the whole page again. Signed-in pages are never kept by anything
     in between (a proxy or CDN), only by the person's own browser."""
-    return FileResponse(WEB / name, headers={"Cache-Control": ("public" if shared else "private") + ", no-cache"})
+    path = WEB / name
+    headers = {"Cache-Control": ("public" if shared else "private") + ", no-cache"}
+    if name == "index.html" and not shared:
+        # The signed-in app is a single HTML document.  A stale browser tab
+        # must not keep showing an older control set after an in-place update.
+        # Keep the exact served bytes observable for runtime diagnostics.
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        headers.update({"Cache-Control": "private, no-store", "X-PeakCut-UI-SHA256": digest,
+                        "X-PeakCut-UI-Version": digest[:16]})
+    return FileResponse(path, headers=headers)
 
 
 _LANDING: dict = {}
@@ -822,7 +831,7 @@ def status(request: Request):
     return {"user": auth.public(me_), "update": updates.latest() if me_.is_admin else None, "updater": updates.state() if me_.is_admin and (updates.latest() or updates.auto_on()) else None,
             "updated": updates.updated() if me_.is_admin else None, "accounts": config.ACCOUNTS, "disk_full": load.disk_full(), "no_ffmpeg": bool(_tools.missing()), "links": {"repo": config.REPO_URL, "follow": config.FOLLOW_URL}, "ai": usage.brief(), "unread": notices.unread(),
             "tour": not accounts.settings()["tour_done"], "ask_rating": _ask_rating(),
-            "youtube": accounts.youtube_ready(), "connect": {p: accounts.can_connect(p) and (accounts.app_open(p) or bool(getattr(me_, "is_admin", False))) for p in accounts.PLATFORM_NAMES}, "open": {p: accounts.can_connect(p) and accounts.app_open(p) for p in accounts.PLATFORM_NAMES}, "max_upload_mb": config.MAX_UPLOAD_MB, "upload_part_mb": config.UPLOAD_PART_MB, "max_batch": config.MAX_ACTIVE_JOBS_PER_USER,
+            "youtube": accounts.youtube_ready(), "connect": {p: accounts.can_connect(p) and (accounts.app_open(p) or bool(getattr(me_, "is_admin", False))) for p in accounts.PLATFORM_NAMES}, "open": {p: accounts.can_connect(p) and accounts.app_open(p) for p in accounts.PLATFORM_NAMES}, "locale": accounts.settings().get("ui_locale", "ru"), "max_upload_mb": config.MAX_UPLOAD_MB, "upload_part_mb": config.UPLOAD_PART_MB, "max_batch": config.MAX_ACTIVE_JOBS_PER_USER,
             "styles": {k: v["label"] for k, v in render.STYLES.items()}, "layouts": render.LAYOUTS, "speech": _speech_brief(),
             "cap_langs": brain.CAP_LANGS,
             "waiting_posts": posting.waiting(), "posted_posts": posting.posted(), "release": config.RELEASE}

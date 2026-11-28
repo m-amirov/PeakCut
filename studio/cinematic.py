@@ -26,8 +26,8 @@ from . import config, ctx, media
 
 
 ANALYZER_VERSION = "cinematic-audio-1"
-PLANNER_VERSION = "cinematic-planner-3"
-SEMANTIC_VERSION = "cinematic-semantic-2"
+PLANNER_VERSION = "cinematic-planner-4"
+SEMANTIC_VERSION = "cinematic-semantic-3"
 MUSIC_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 VIDEO_EXTS = {".mp4", ".mkv", ".mov"}
 ATMOSPHERE_TAGS = {
@@ -115,6 +115,12 @@ class Cancelled(RuntimeError):
 
 class MusicRequired(RuntimeError):
     """The requested Auto edit cannot start without a confirmed music track."""
+
+    pass
+
+
+class InsufficientSuitableFootage(RuntimeError):
+    """The approved, content-compatible source pool cannot satisfy the requested duration."""
 
     pass
 
@@ -1097,6 +1103,49 @@ def _shot_expressiveness(shot: dict, event: dict, options: dict, ai_score: float
     return face * 0.3 + dialogue * 0.25 + sharp * 0.18 + length * 0.17 + ai_score * 0.2
 
 
+def _selection_capacity(shots: list[dict], options: dict, include_transitions: bool = True) -> float:
+    """Estimate usable timeline capacity without inventing source material.
+
+    The estimate is deliberately conservative: it applies the profile's maximum
+    shot length, the fastest permitted speed-ramp value and the largest natural
+    transition overlap.  The planner may therefore select a few more approved
+    shots than the nominal target count, but it will not stop merely because an
+    anchor count was reached.
+    """
+    profile = _pacing_profile(options)
+    speed = 1.04 if options.get("speed_ramp") and options.get("effects_intensity") == "strong" else 1.0
+    capacity = sum(min(float(shot.get("duration") or 0), float(profile["max"])) / speed for shot in shots)
+    if include_transitions and len(shots) > 1:
+        capacity -= sum(_transition_duration(options, "natural", index, float(shot.get("duration") or 0))
+                        for index, shot in enumerate(shots[1:], 1))
+    return max(0.0, capacity)
+
+
+def _related_event_expansion(events: list[dict], arc: list[dict]) -> list[dict]:
+    """Return only nearby or visually related events for a bounded pool expansion."""
+    selected_ids = {str(event.get("id")) for event in arc}
+    positions = {str(event.get("id")): index for index, event in enumerate(events)}
+    selected_positions = [positions[event_id] for event_id in selected_ids if event_id in positions]
+    if not selected_positions:
+        return []
+    groups = {str(event.get("dominant_visual_group") or "") for event in arc}
+    groups.discard("")
+    dialogue = {bool(event.get("dialogue")) for event in arc}
+    ranked = []
+    for event in events:
+        event_id = str(event.get("id"))
+        if event_id in selected_ids or event_id not in positions:
+            continue
+        distance = min(abs(positions[event_id] - position) for position in selected_positions)
+        same_group = bool(str(event.get("dominant_visual_group") or "") in groups)
+        nearby = distance <= 6 and bool(event.get("dialogue")) in dialogue
+        if not (same_group or nearby):
+            continue
+        ranked.append((0 if same_group else 1, distance, -float(event.get("local_discovery_score") or 0), event))
+    ranked.sort(key=lambda item: item[:3])
+    return [item[3] for item in ranked]
+
+
 def _select_paced_shots(events: list[dict], scenes: list[dict], arc: list[dict], notes: dict | None,
                         options: dict, duration: float) -> list[dict]:
     """Select expressive approved shots, rather than rendering every detected shot."""
@@ -1120,22 +1169,20 @@ def _select_paced_shots(events: list[dict], scenes: list[dict], arc: list[dict],
     if not candidates:
         return []
     profile = _pacing_profile(options)
-    limit = int(math.ceil(duration / float(profile["target"])))
-    limit = min(limit, 24 if options.get("edit_mode") in {"action_edit", "phonk_aura"} else 16)
+    target_count = int(math.ceil(duration / float(profile["target"])))
     selected = []
     # One anchor per event first keeps a story/character edit visually varied.
     for event, ranked in candidates:
-        if len(selected) >= limit:
-            break
         selected.append((event, ranked[0][1]))
-    # Action/phonk can use a second expressive shot from a strong event, but
-    # never spend the entire timeline on every detected micro-shot.
-    if len(selected) < limit and options.get("edit_mode") in {"action_edit", "phonk_aura"}:
-        extras = [(score, event, shot) for event, ranked in candidates for score, shot in ranked[1:]]
-        for _score, event, shot in sorted(extras, reverse=True, key=lambda x: x[0]):
-            if len(selected) >= limit:
-                break
-            selected.append((event, shot))
+    # Every mode may consume more approved expressive shots when the anchor
+    # count cannot carry the requested duration.  Ranking stays local to the
+    # selected event arc; no arbitrary neighbouring frames are injected.
+    extras = [(score, event, shot) for event, ranked in candidates for score, shot in ranked[1:]]
+    for _score, event, shot in sorted(extras, reverse=True, key=lambda x: x[0]):
+        chosen = [item[1] for item in selected]
+        if len(selected) >= target_count and _selection_capacity(chosen, options) >= duration - 2 / 30:
+            break
+        selected.append((event, shot))
     if options.get("edit_mode") == "character_edit":
         # A character edit may be non-contiguous, but the output remains easy
         # to follow when the chosen source anchors are ordered chronologically.
@@ -1222,9 +1269,39 @@ def _select_event_arc(events: list[dict], notes: dict | None, duration: float, o
 def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], events: list[dict], options: dict,
                         music: dict | None, music_analysis: dict | None, reason: str, warnings: list[str],
                         semantic_notes: dict | None) -> dict:
-    duration = min(float(options["duration"]), float(source_info["duration"]))
+    requested_duration = float(options["duration"])
+    if float(source_info["duration"]) + 2 / 30 < requested_duration:
+        raise InsufficientSuitableFootage(
+            f"Insufficient suitable footage for a {int(requested_duration)} second edit: the source is only "
+            f"{float(source_info['duration']):.1f} seconds long. Choose a shorter edit or change the edit focus."
+        )
+    duration = requested_duration
     arc, concept, semantic_status = _select_event_arc(events, semantic_notes, duration, options)
     shots = _select_paced_shots(events, scenes, arc, semantic_notes, options, duration)
+    if (_selection_capacity(shots, options) < duration - 2 / 30 and
+            _selection_capacity(shots, options, include_transitions=False) >= duration - 2 / 30):
+        # A crossfade consumes source capacity.  Preserve the requested edit
+        # length with approved source material by using hard cuts when the
+        # alternative would be an under-length result.
+        options = {**options, "smooth_transitions": False, "transition_style": "hard_cut"}
+        warnings.append("Smooth transitions were disabled because their overlap would exceed the approved source capacity.")
+    if _selection_capacity(shots, options) < duration - 2 / 30:
+        expanded = []
+        for event in _related_event_expansion(events, arc):
+            arc.append(event)
+            expanded.append(str(event.get("id")))
+            shots = _select_paced_shots(events, scenes, arc, semantic_notes, options, duration)
+            if _selection_capacity(shots, options) >= duration - 2 / 30:
+                warnings.append("Expanded the approved pool with nearby or visually related events to meet the requested duration.")
+                break
+        if expanded and _selection_capacity(shots, options) < duration - 2 / 30:
+            warnings.append("Approved related events were exhausted before the requested duration could be met.")
+    if _selection_capacity(shots, options) < duration - 2 / 30:
+        capacity = _selection_capacity(shots, options)
+        raise InsufficientSuitableFootage(
+            f"Insufficient suitable footage for a {int(requested_duration)} second edit: approved, content-compatible "
+            f"shots provide about {capacity:.1f} seconds. Choose a shorter edit or change the edit focus."
+        )
     if not shots:
         raise RuntimeError("No approved shots were found in the selected semantic event sequence.")
     profile = _pacing_profile(options)
@@ -1262,8 +1339,17 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
                 if abs(float(nearest["timeline"]) - target_end) <= max(1.35, float(phase["pace"]) * 2.0):
                     target_end, marker = float(nearest["timeline"]), nearest
         target_end = min(duration, target_end, max_visible_end)
-        if target_end - rendered < max(0.5, profile["min"] * 0.45):
-            continue
+        minimum_segment = max(0.5, profile["min"] * 0.45)
+        if target_end - rendered < minimum_segment:
+            # A beat marker may fall too close to the end of a short approved
+            # shot.  Do not discard that shot and lose source capacity merely
+            # to preserve an optional marker; keep the approved material and
+            # let the cut land at its natural source boundary.
+            if marker:
+                marker = None
+                target_end = min(duration, rendered + target_pace, max_visible_end)
+            if target_end - rendered < minimum_segment:
+                continue
         transition = _transition_duration(options, _phase_at(phases, min(duration, target_end))["name"],
                                           len(selected_shots) + 1, source_length)
         target_end = min(duration, target_end, max_visible_end - transition)
@@ -1278,6 +1364,15 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
         rendered = target_end
     if not speeds:
         raise RuntimeError("No approved shot contained enough source material for the selected duration.")
+    if rendered < duration - (2.0 / 30.0 + 0.01) and options["beat_sync"]:
+        # Musical boundaries are optional; the requested duration and
+        # approved source boundaries are not.  Rebuild the same approved pool
+        # without beat shortening when beat cuts would make the timeline fail
+        # closed, instead of publishing a shorter edit.
+        retry_warnings = list(warnings)
+        retry_warnings.append("Beat Sync was disabled because music boundaries would reduce the approved material below the requested duration.")
+        return _make_semantic_plan(source, source_info, scenes, events, {**options, "beat_sync": False},
+                                   music, music_analysis, reason, retry_warnings, semantic_notes)
     segments, rendered = [], 0.0
     recommendations = _validated_event_recommendations(semantic_notes, events)
     for index, shot in enumerate(selected_shots):
@@ -1359,11 +1454,14 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
 
 def make_plan(source: Path, source_info: dict, scenes: list[dict], options: dict, music: dict | None, music_analysis: dict | None,
               reason: str, warnings: list[str], ai_notes: dict | None = None, events: list[dict] | None = None) -> dict:
+    if float(source_info["duration"]) + 2 / 30 < float(options["duration"]):
+        raise InsufficientSuitableFootage(
+            f"Insufficient suitable footage for a {int(options['duration'])} second edit: the source is only "
+            f"{float(source_info['duration']):.1f} seconds long. Choose a shorter edit or change the edit focus."
+        )
     if events:
         return _make_semantic_plan(source, source_info, scenes, events, options, music, music_analysis, reason, warnings, ai_notes)
-    duration = min(float(options["duration"]), float(source_info["duration"]))
-    if float(source_info["duration"]) + 0.05 < float(options["duration"]):
-        warnings.append("The source is shorter than the requested edit; the output duration was capped to the source.")
+    duration = float(options["duration"])
     usable = [dict(s) for s in scenes if not s.get("excluded") and float(s.get("duration") or 0) >= 0.65]
     if not usable:
         raise RuntimeError("No usable scenes were found in this video.")
@@ -2385,14 +2483,22 @@ def quality_gate(plan: dict, output: Path, captions_timeline: Path | None = None
     """Mechanical final checks; it deliberately does not claim artistic acceptance."""
     checks = {}
     technical_errors = []
+    requested_duration = float(plan.get("requested_duration") or plan.get("total_duration") or 0)
+    planned_duration = float(plan.get("total_duration") or 0)
+    actual_duration = None
+    checks["requested_planned_duration"] = abs(requested_duration - planned_duration) <= 2 / 30 + 0.01
+    if not checks["requested_planned_duration"]:
+        technical_errors.append("requested_vs_planned_duration")
     try:
         probe = _probe(output)
         checks["mp4_bytes"] = output.is_file() and output.stat().st_size > 0
         checks["vertical_geometry"] = probe.get("width") == 1080 and probe.get("height") == 1920
         checks["audio_presence"] = bool(probe.get("has_audio"))
-        checks["duration"] = abs(float(probe.get("duration") or 0) - float(plan.get("total_duration") or 0)) <= 2 / 30 + 0.08
+        actual_duration = float(probe.get("duration") or 0)
+        checks["planned_actual_duration"] = abs(actual_duration - planned_duration) <= 2 / 30 + 0.08
+        checks["duration"] = checks["planned_actual_duration"]
     except Exception as e:  # noqa: BLE001
-        checks.update(mp4_bytes=False, vertical_geometry=False, audio_presence=False, duration=False)
+        checks.update(mp4_bytes=False, vertical_geometry=False, audio_presence=False, planned_actual_duration=False, duration=False)
         technical_errors.append(str(e)[:180])
     segments = plan.get("segments") or []
     ids = [str(x.get("source_id")) for x in segments]
@@ -2407,12 +2513,14 @@ def quality_gate(plan: dict, output: Path, captions_timeline: Path | None = None
                         caption_meta.get("mode") == "off" or caption_meta.get("audio_mode") == "music_only"
     checks["caption_artifacts"] = captions_disabled or bool(has_timeline and has_ass and captions_ass.stat().st_size > 0)
     for key, value in checks.items():
-        if not value:
+        if not value and key not in technical_errors:
             technical_errors.append(key)
     artistic_warnings = [str(x)[:240] for x in (plan.get("warnings") or []) if str(x).strip()]
     if not plan.get("semantic_concept"):
         artistic_warnings.append("No AI edit concept was recorded; mechanical validation does not establish artistic coherence.")
     return {"technical_status": "PASS" if not technical_errors else "FAIL", "checks": checks,
+            "requested_duration": requested_duration, "planned_duration": planned_duration,
+            "actual_duration": actual_duration,
             "technical_errors": technical_errors, "artistic_warnings": artistic_warnings,
             "errors": technical_errors,
             "artistic_acceptance": "NOT_RUN", "listening_acceptance": "NOT_RUN", "rights_acceptance": "SEPARATE_LICENSE_GATE",
@@ -2432,9 +2540,15 @@ def _run_job(job: dict):
         source_info = validate_video(source)
         fallback_original = options["music_source"] == "original_audio"
         options["keep_original_dialogue"] = (options["keep_original_dialogue"] or fallback_original) and source_info["has_audio"]
-        if job.get("repeat") and _job_file(job, "edit-plan.json").is_file():
+        saved_plan_path = _job_file(job, "edit-plan.json")
+        saved_plan = _json_read(saved_plan_path, {}) if job.get("repeat") and saved_plan_path.is_file() else {}
+        # A current planner may still produce a deliberately invalid plan in
+        # tests or after an interrupted edit; let Quality Gate reject that
+        # plan.  Only plans from an older planner need automatic rebuilding.
+        saved_plan_compatible = bool(saved_plan.get("planner_version") == PLANNER_VERSION)
+        if job.get("repeat") and saved_plan_path.is_file() and saved_plan_compatible:
             _update(job, status="running", stage="Rendering saved edit plan", progress=0.55)
-            plan = _json_read(_job_file(job, "edit-plan.json"), {})
+            plan = saved_plan
             if job.pop("rebuild_captions", False):
                 _update(job, stage="Preparing captions", progress=0.60)
                 caption_result = prepare_captions(job, source, plan, options, existing_words=[], cancel=cancelled)
@@ -2453,6 +2567,9 @@ def _run_job(job: dict):
             metrics = render_plan(source, music_path, plan, options, render_candidate,
                                   captions_ass=_job_file(job, "captions.ass"), cancel=cancelled)
         else:
+            if job.get("repeat") and saved_plan_path.is_file() and not saved_plan_compatible:
+                _update(job, status="running", stage="Rebuilding outdated edit plan", progress=0.18,
+                        warnings=["The saved plan was created by an older duration planner and was rebuilt before rendering."])
             # Music-first contract: the selected bytes and analyzed segment
             # exist before event interpretation or the director prompt.
             _update(job, status="running", stage="Selecting and analyzing music", progress=0.08)
@@ -2519,6 +2636,15 @@ def _run_job(job: dict):
         render_candidate.replace(_job_file(job, "result.mp4"))
         render_candidate = None
         _update(job, status="done", stage="Ready", progress=1.0, error="", repeat=False, finished_at=_now())
+    except InsufficientSuitableFootage as e:
+        if render_candidate:
+            render_candidate.unlink(missing_ok=True)
+        message = str(e)
+        _json_write(_job_file(job, "error.json"), {"kind": "insufficient_suitable_footage", "error": message,
+                                                     "requested_duration": options.get("duration"),
+                                                     "suggestion": "Choose a shorter edit or change the edit focus."})
+        _update(job, status="error", stage="Insufficient suitable footage", progress=0.95, error=message,
+                repeat=False, finished_at=_now())
     except MusicRequired as e:
         if render_candidate:
             render_candidate.unlink(missing_ok=True)

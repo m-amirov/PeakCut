@@ -441,28 +441,51 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 continue
             texts = [re.sub(r"[.,;:]+$", "", x["w"]) for x in g]
             size = st["size"]
-            wide = f.width(" ".join(texts), size)
-            if wide > CAP_MAX_W:
-                size = max(36, int(size * CAP_MAX_W / wide))
-            pos = f"\\an5\\pos({W // 2},{cap_y - f.cap_shift(size):.0f})\\fs{size}"
-            base = [st["strong"] if _key(x["w"]) in strong else st["base"] for x in g]
+            line_groups = [g]
+            for count in (1, 2):
+                if count > len(g):
+                    break
+                line_text_groups = _split_lines(texts, count, lambda ls: f.width(" ".join(ls), size))
+                candidate, cursor = [], 0
+                for line_text in line_text_groups:
+                    amount = len(line_text.split())
+                    candidate.append(g[cursor:cursor + amount])
+                    cursor += amount
+                if max(f.width(line_text, size) for line_text in line_text_groups) <= CAP_MAX_W:
+                    line_groups = candidate
+                    break
+                line_groups = candidate
+            widest = max(f.width(" ".join(re.sub(r"[.,;:]+$", "", x["w"]) for x in ls), size) for ls in line_groups)
+            if widest > CAP_MAX_W:
+                size = max(36, int(size * CAP_MAX_W / widest))
+            line_height = size * 1.16
+            group_end = min(g[-1]["e"] + 0.25, groups[gi + 1][0]["s"] if gi + 1 < len(groups) else end) - start
+            for line_index, line_group in enumerate(line_groups):
+                line_start, line_end = g_start, group_end
+                if line_end - line_start < 0.02:
+                    continue
+                line_texts = [re.sub(r"[.,;:]+$", "", x["w"]) for x in line_group]
+                pos_y = cap_y - ((len(line_groups) - 1) * line_height / 2) + line_index * line_height - f.cap_shift(size)
+                pos = f"\\an5\\pos({W // 2},{pos_y:.0f})\\fs{size}"
+                base = [st["strong"] if _key(x["w"]) in strong else st["base"] for x in line_group]
 
-            def line(on):
-                parts = []
-                for i, t in enumerate(texts):
-                    lit = st["anim"] != "none" and (i == on or (st["anim"] == "fill" and 0 <= i < on))
-                    parts.append(f"{{\\c&H{st['active'] if lit else base[i]}&}}{t}")
-                return " ".join(parts)
-            marks = [max(g_start, x["s"] - start) for x in g] + [g_end]
-            if st["anim"] == "none":
-                ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(g_end)},Cap,,0,0,0,,{{{pos}}}{line(-1)}")
-                continue
-            if marks[0] - g_start >= 0.02:
-                ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(marks[0])},Cap,,0,0,0,,{{{pos}}}{line(-1)}")
-            for i in range(len(g)):
-                a, b = marks[i], marks[i + 1]
-                if b - a >= 0.02:
-                    ev.append(f"Dialogue: 1,{_ts(a)},{_ts(b)},Cap,,0,0,0,,{{{pos}}}{line(i)}")
+                def line(on):
+                    parts = []
+                    for local_index, text_value in enumerate(line_texts):
+                        lit = st["anim"] != "none" and (local_index == on or (st["anim"] == "fill" and 0 <= local_index < on))
+                        parts.append(f"{{\\c&H{st['active'] if lit else base[local_index]}&}}{text_value}")
+                    return " ".join(parts)
+
+                marks = [max(line_start, x["s"] - start) for x in line_group] + [line_end]
+                if st["anim"] == "none":
+                    ev.append(f"Dialogue: 1,{_ts(line_start)},{_ts(line_end)},Cap,,0,0,0,,{{{pos}}}{line(-1)}")
+                    continue
+                if marks[0] - line_start >= 0.02:
+                    ev.append(f"Dialogue: 1,{_ts(line_start)},{_ts(marks[0])},Cap,,0,0,0,,{{{pos}}}{line(-1)}")
+                for local_index in range(len(line_group)):
+                    a, b = marks[local_index], marks[local_index + 1]
+                    if b - a >= 0.02:
+                        ev.append(f"Dialogue: 1,{_ts(a)},{_ts(b)},Cap,,0,0,0,,{{{pos}}}{line(local_index)}")
         return head + "\n".join(ev) + "\n"
     for gi, g in enumerate(groups):
         g_start = max(0.0, g[0]["s"] - start)

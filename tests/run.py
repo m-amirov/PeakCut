@@ -51,7 +51,7 @@ def main() -> int:
         runs = [("permissions", ["tests/test_permissions.py", BASE, str(ROOT), sys.executable]),
                 ("cinematic edit engine: media, music, plan and decode", ["tests/test_cinematic.py"]),
                 ("cinematic Stage 6B: director modes, pacing and caption remap", ["tests/test_cinematic_stage6b.py"]),
-                ("cinematic Stage 6B.2: duration capacity and fail-closed gate", ["tests/test_cinematic_duration.py"]),
+                ("cinematic Stage 6B.4: duration capacity, timeline contract and fail-closed gate", ["tests/test_cinematic_duration.py"]),
                 ("cinematic Stage 6B.2: Russian locale and runtime UI provenance", ["tests/test_ui_i18n.py"]),
                 ("abuse and limits", ["tests/test_abuse.py", BASE, str(ROOT)]),
                 ("queue under load", ["tests/test_load_queue.py", str(ROOT)]),

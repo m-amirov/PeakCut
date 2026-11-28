@@ -28,6 +28,9 @@ from . import config, ctx, media
 ANALYZER_VERSION = "cinematic-audio-1"
 PLANNER_VERSION = "cinematic-planner-4"
 SEMANTIC_VERSION = "cinematic-semantic-3"
+TIMELINE_VERSION = "cinematic-timeline-1"
+FPS = 30
+DURATION_TOLERANCE = 2 / FPS
 MUSIC_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 VIDEO_EXTS = {".mp4", ".mkv", ".mov"}
 ATMOSPHERE_TAGS = {
@@ -123,6 +126,35 @@ class InsufficientSuitableFootage(RuntimeError):
     """The approved, content-compatible source pool cannot satisfy the requested duration."""
 
     pass
+
+
+def _transition_from_segment(segment: dict, index: int) -> float:
+    """Return the incoming overlap owned by a segment in the saved timeline."""
+    if index <= 0:
+        return 0.0
+    try:
+        return max(0.0, float((segment.get("transition") or {}).get("duration") or 0.0))
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+
+
+def _timeline_duration(segments: list[dict]) -> float:
+    """Measure visible timeline duration using the same overlap definition everywhere."""
+    total = 0.0
+    for index, segment in enumerate(segments or []):
+        try:
+            span = max(0.0, float(segment["timeline_out"]) - float(segment["timeline_in"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        total += span - _transition_from_segment(segment, index)
+    return max(0.0, total)
+
+
+def _duration_fields(plan: dict) -> tuple[float, float, float]:
+    requested = float(plan.get("requested_duration") or plan.get("total_duration") or 0)
+    planned = float(plan.get("total_duration") or 0)
+    timeline = _timeline_duration(plan.get("segments") or [])
+    return requested, planned, timeline
 
 
 def _now() -> float:
@@ -1103,22 +1135,42 @@ def _shot_expressiveness(shot: dict, event: dict, options: dict, ai_score: float
     return face * 0.3 + dialogue * 0.25 + sharp * 0.18 + length * 0.17 + ai_score * 0.2
 
 
-def _selection_capacity(shots: list[dict], options: dict, include_transitions: bool = True) -> float:
-    """Estimate usable timeline capacity without inventing source material.
+def _selection_capacity_details(shots: list[dict], options: dict, include_transitions: bool = True) -> dict:
+    """Estimate capacity with the same minimum/maximum/speed rules as planning.
 
-    The estimate is deliberately conservative: it applies the profile's maximum
-    shot length, the fastest permitted speed-ramp value and the largest natural
-    transition overlap.  The planner may therefore select a few more approved
-    shots than the nominal target count, but it will not stop merely because an
-    anchor count was reached.
+    This is intentionally a lower bound: strong speed variation uses its fastest
+    permitted value and transition capacity uses the largest overlap allowed by
+    the selected mode.  A lower bound may reject an edit that needs a different
+    pool, but it must never promise a timeline the planner cannot render.
     """
     profile = _pacing_profile(options)
     speed = 1.04 if options.get("speed_ramp") and options.get("effects_intensity") == "strong" else 1.0
-    capacity = sum(min(float(shot.get("duration") or 0), float(profile["max"])) / speed for shot in shots)
-    if include_transitions and len(shots) > 1:
-        capacity -= sum(_transition_duration(options, "natural", index, float(shot.get("duration") or 0))
-                        for index, shot in enumerate(shots[1:], 1))
-    return max(0.0, capacity)
+    minimum_segment = max(0.5, float(profile["min"]) * 0.45)
+    usable, dropped = [], []
+    for shot in shots or []:
+        length = max(0.0, float(shot.get("duration") or 0))
+        if length < max(0.65, minimum_segment):
+            dropped.append({"id": str(shot.get("id") or ""), "duration": round(length, 3), "reason": "too_short"})
+            continue
+        usable.append(shot)
+    transition_losses = []
+    if include_transitions and len(usable) > 1:
+        phases = ("hook", "build_up", "climax", "resolution", "natural")
+        for index, shot in enumerate(usable[1:], 1):
+            length = float(shot.get("duration") or 0)
+            overlap = max(_transition_duration(options, phase, index, length) for phase in phases)
+            transition_losses.append(overlap)
+    source_capacity = sum(min(float(shot.get("duration") or 0), float(profile["max"])) / speed for shot in usable)
+    transition_loss = sum(transition_losses)
+    return {"capacity": max(0.0, source_capacity - transition_loss),
+            "source_capacity": max(0.0, source_capacity),
+            "transition_loss": round(transition_loss, 3),
+            "usable_count": len(usable), "dropped_short_shots": dropped,
+            "speed_for_estimate": speed}
+
+
+def _selection_capacity(shots: list[dict], options: dict, include_transitions: bool = True) -> float:
+    return float(_selection_capacity_details(shots, options, include_transitions)["capacity"])
 
 
 def _related_event_expansion(events: list[dict], arc: list[dict]) -> list[dict]:
@@ -1268,7 +1320,7 @@ def _select_event_arc(events: list[dict], notes: dict | None, duration: float, o
 
 def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], events: list[dict], options: dict,
                         music: dict | None, music_analysis: dict | None, reason: str, warnings: list[str],
-                        semantic_notes: dict | None) -> dict:
+                        semantic_notes: dict | None, _planning_diagnostics: dict | None = None) -> dict:
     requested_duration = float(options["duration"])
     if float(source_info["duration"]) + 2 / 30 < requested_duration:
         raise InsufficientSuitableFootage(
@@ -1303,7 +1355,10 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
             f"shots provide about {capacity:.1f} seconds. Choose a shorter edit or change the edit focus."
         )
     if not shots:
-        raise RuntimeError("No approved shots were found in the selected semantic event sequence.")
+        raise InsufficientSuitableFootage(
+            f"Insufficient suitable footage for a {int(requested_duration)} second edit: approved, content-compatible "
+            "shots provide about 0.0 seconds after pacing and music alignment. Choose a shorter edit or change the edit focus."
+        )
     profile = _pacing_profile(options)
     phases = _music_phases(music_analysis, duration)
     sync_profile = _music_sync_profile(music_analysis, float(options["music_start_offset"]), duration, options["effects_intensity"])
@@ -1316,7 +1371,7 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
     # so validation and FFmpeg use the same definition of the sync moment.
     boundaries, boundary_refs, speeds, selected_shots, outgoing = [0.0], [None], [], [], []
     rendered = 0.0
-    for shot in shots:
+    for shot_index, shot in enumerate(shots):
         if rendered >= duration - 0.02:
             break
         phase = _phase_at(phases, rendered)
@@ -1339,6 +1394,7 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
                 if abs(float(nearest["timeline"]) - target_end) <= max(1.35, float(phase["pace"]) * 2.0):
                     target_end, marker = float(nearest["timeline"]), nearest
         target_end = min(duration, target_end, max_visible_end)
+        has_later_usable_shot = any(float(next_shot.get("duration") or 0) >= 0.65 for next_shot in shots[shot_index + 1:])
         minimum_segment = max(0.5, profile["min"] * 0.45)
         if target_end - rendered < minimum_segment:
             # A beat marker may fall too close to the end of a short approved
@@ -1349,9 +1405,14 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
                 marker = None
                 target_end = min(duration, rendered + target_pace, max_visible_end)
             if target_end - rendered < minimum_segment:
-                continue
-        transition = _transition_duration(options, _phase_at(phases, min(duration, target_end))["name"],
-                                          len(selected_shots) + 1, source_length)
+                remaining = duration - rendered
+                if not has_later_usable_shot and remaining >= 0.65:
+                    target_end = duration
+                else:
+                    continue
+        transition = (_transition_duration(options, _phase_at(phases, min(duration, target_end))["name"],
+                                           len(selected_shots) + 1, source_length)
+                      if has_later_usable_shot else 0.0)
         target_end = min(duration, target_end, max_visible_end - transition)
         if target_end - rendered < max(0.5, profile["min"] * 0.45):
             transition = 0.0
@@ -1364,15 +1425,18 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
         rendered = target_end
     if not speeds:
         raise RuntimeError("No approved shot contained enough source material for the selected duration.")
-    if rendered < duration - (2.0 / 30.0 + 0.01) and options["beat_sync"]:
+    if rendered < duration - DURATION_TOLERANCE and options["beat_sync"]:
         # Musical boundaries are optional; the requested duration and
         # approved source boundaries are not.  Rebuild the same approved pool
         # without beat shortening when beat cuts would make the timeline fail
         # closed, instead of publishing a shorter edit.
         retry_warnings = list(warnings)
         retry_warnings.append("Beat Sync was disabled because music boundaries would reduce the approved material below the requested duration.")
+        retry_diagnostics = dict(_planning_diagnostics or {})
+        retry_diagnostics["beat_alignment_loss"] = round(max(0.0, _selection_capacity(shots, options, include_transitions=False) - rendered), 3)
+        retry_diagnostics["beat_sync_attempt_duration"] = round(rendered, 3)
         return _make_semantic_plan(source, source_info, scenes, events, {**options, "beat_sync": False},
-                                   music, music_analysis, reason, retry_warnings, semantic_notes)
+                                   music, music_analysis, reason, retry_warnings, semantic_notes, retry_diagnostics)
     segments, rendered = [], 0.0
     recommendations = _validated_event_recommendations(semantic_notes, events)
     for index, shot in enumerate(selected_shots):
@@ -1429,10 +1493,38 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
             last["source_out"] = round(float(last["source_out"]) + deficit * float(last["playback_speed"] or 1.0), 3)
             last["timeline_out"] = round(float(last["timeline_out"]) + deficit, 3)
             rendered = duration
-    if rendered < duration - (2.0 / 30.0 + 0.01):
-        warnings.append("The selected event sequence ended before the requested duration; no unapproved neighboring shots were added.")
-    total = round(min(rendered, duration), 3)
+    timeline_duration = _timeline_duration(segments)
+    if timeline_duration < duration - DURATION_TOLERANCE and options["beat_sync"]:
+        retry_warnings = list(warnings)
+        retry_warnings.append("Beat Sync was disabled because the aligned timeline could not preserve the requested duration inside approved shot boundaries.")
+        retry_diagnostics = dict(_planning_diagnostics or {})
+        retry_diagnostics["beat_alignment_loss"] = round(max(0.0, _selection_capacity(shots, options, include_transitions=False) - timeline_duration), 3)
+        retry_diagnostics["beat_sync_attempt_duration"] = round(timeline_duration, 3)
+        return _make_semantic_plan(source, source_info, scenes, events, {**options, "beat_sync": False},
+                                   music, music_analysis, reason, retry_warnings, semantic_notes, retry_diagnostics)
+    if timeline_duration < duration - DURATION_TOLERANCE:
+        available = max(0.0, timeline_duration)
+        raise InsufficientSuitableFootage(
+            f"Insufficient suitable footage for a {int(requested_duration)} second edit: approved, content-compatible "
+            f"shots provide about {available:.1f} seconds after pacing and music alignment. Choose a shorter edit or change the edit focus."
+        )
+    total = round(min(timeline_duration, duration), 3)
     transition_max = max((float((segment.get("transition") or {}).get("duration") or 0) for segment in segments), default=0.0)
+    capacity_details = _selection_capacity_details(shots, options)
+    selected_source_duration = sum(max(0.0, float(x.get("source_out") or 0) - float(x.get("source_in") or 0))
+                                   for x in segments)
+    timeline_diagnostics = {**(_planning_diagnostics or {}),
+                            "timeline_version": TIMELINE_VERSION,
+                            "approved_candidate_shots": capacity_details["usable_count"],
+                            "approved_candidate_source_duration": round(sum(float(x.get("duration") or 0) for x in shots), 3),
+                            "estimated_selection_capacity": round(capacity_details["capacity"], 3),
+                            "estimated_source_capacity": round(capacity_details["source_capacity"], 3),
+                            "transition_loss": round(capacity_details["transition_loss"], 3),
+                            "dropped_short_shots": capacity_details["dropped_short_shots"],
+                            "selected_shots": len(segments),
+                            "selected_source_duration": round(selected_source_duration, 3),
+                            "planned_duration": total,
+                            "playback_speed": sorted({float(x.get("playback_speed") or 1.0) for x in segments})}
     return {"planner_version": PLANNER_VERSION, "semantic_version": SEMANTIC_VERSION, "source_name": source.name,
             "source_duration": round(source_info["duration"], 3), "track_id": (music or {}).get("track_id", ""),
             "track_title": (music or {}).get("title", "Original Audio" if options["music_source"] == "original_audio" else ""),
@@ -1441,6 +1533,7 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
             "music_segment": {"start": round(float(options["music_start_offset"]), 3), "end": round(float(options["music_start_offset"]) + total, 3)} if music else None,
             "atmosphere": options["atmosphere"], "intensity": options["effects_intensity"], "requested_duration": options["duration"],
             "total_duration": total, "transition_overlap": transition_max, "selection_reason": reason,
+            "timeline_version": TIMELINE_VERSION, "timeline_diagnostics": timeline_diagnostics,
             "edit_mode": options.get("edit_mode"), "pacing_profile": profile,
             "semantic_concept": concept, "target_character": (semantic_notes or {}).get("target_character", "") if isinstance(semantic_notes, dict) else "",
             "semantic_status": semantic_status, "selected_event_ids": [x["id"] for x in arc],
@@ -1553,7 +1646,26 @@ def make_plan(source: Path, source_info: dict, scenes: list[dict], options: dict
     rendered_duration = sum(float(seg["timeline_out"]) - float(seg["timeline_in"]) for seg in segments) - transition * max(0, len(segments) - 1)
     if rendered_duration < duration - 0.5:
         warnings.append("The source did not contain enough distinct usable scenes; the edit is shorter than requested.")
-    total = round(min(rendered_duration, duration), 3)
+    timeline_duration = _timeline_duration(segments)
+    if timeline_duration < duration - DURATION_TOLERANCE:
+        capacity = _selection_capacity(selected, options)
+        raise InsufficientSuitableFootage(
+            f"Insufficient suitable footage for a {int(duration)} second edit: approved, content-compatible "
+            f"shots provide about {capacity:.1f} seconds after pacing and music alignment. Choose a shorter edit or change the edit focus."
+        )
+    total = round(min(timeline_duration, duration), 3)
+    capacity_details = _selection_capacity_details(selected, options)
+    timeline_diagnostics = {"timeline_version": TIMELINE_VERSION,
+                            "approved_candidate_shots": len(usable),
+                            "approved_candidate_source_duration": round(sum(float(x.get("duration") or 0) for x in usable), 3),
+                            "estimated_selection_capacity": round(capacity_details["capacity"], 3),
+                            "estimated_source_capacity": round(capacity_details["source_capacity"], 3),
+                            "transition_loss": round(capacity_details["transition_loss"], 3),
+                            "dropped_short_shots": capacity_details["dropped_short_shots"],
+                            "selected_shots": len(segments),
+                            "selected_source_duration": round(sum(float(x.get("source_out") or 0) - float(x.get("source_in") or 0) for x in segments), 3),
+                            "planned_duration": total,
+                            "playback_speed": sorted({float(x.get("playback_speed") or 1.0) for x in segments})}
     return {"planner_version": PLANNER_VERSION, "source_name": source.name, "source_duration": round(source_info["duration"], 3),
             "track_id": (music or {}).get("track_id", ""), "music_offset": round(float(options["music_start_offset"]), 3),
             "track_title": (music or {}).get("title", "Original Audio" if options["music_source"] == "original_audio" else ""),
@@ -1562,6 +1674,7 @@ def make_plan(source: Path, source_info: dict, scenes: list[dict], options: dict
             "intensity": options["effects_intensity"], "requested_duration": options["duration"], "total_duration": total,
             "music_segment": {"start": round(float(options["music_start_offset"]), 3), "end": round(float(options["music_start_offset"]) + total, 3)} if music else None,
             "transition_overlap": transition, "selection_reason": reason, "warnings": warnings, "segments": segments,
+            "timeline_version": TIMELINE_VERSION, "timeline_diagnostics": timeline_diagnostics,
             "beat_sync": bool(options["beat_sync"]), "sync_mode": sync_profile.get("mode", "none") if options["beat_sync"] else "off",
             "rhythm_confidence": sync_profile.get("confidence", 0.0),
             "crossfade_sync_definition": "beat-aligned at crossfade start; visual blend spans the following overlap" if transition else "not applicable",
@@ -1571,7 +1684,7 @@ def make_plan(source: Path, source_info: dict, scenes: list[dict], options: dict
 
 def validate_plan(plan: dict, source_duration: float) -> list[str]:
     if str(plan.get("planner_version", "")).startswith("cinematic-planner-"):
-        errors, rendered, previous_out = [], 0.0, 0.0
+        errors, previous_out = [], 0.0
         segments = plan.get("segments") if isinstance(plan, dict) else None
         if not isinstance(segments, list) or not segments:
             return ["The edit plan has no segments."]
@@ -1580,7 +1693,7 @@ def validate_plan(plan: dict, source_duration: float) -> list[str]:
                 a, b = float(seg["source_in"]), float(seg["source_out"])
                 ti, to = float(seg["timeline_in"]), float(seg["timeline_out"])
                 speed = float(seg.get("playback_speed") or 1.0)
-                trans = float((seg.get("transition") or {}).get("duration") or 0.0) if i else 0.0
+                trans = _transition_from_segment(seg, i)
             except (KeyError, TypeError, ValueError):
                 errors.append(f"Segment {i + 1} has invalid time values.")
                 continue
@@ -1596,6 +1709,8 @@ def validate_plan(plan: dict, source_duration: float) -> list[str]:
                     errors.append(f"Segment {i + 1} has invalid approved shot/event boundaries.")
             if to <= ti or ti < -0.01:
                 errors.append(f"Segment {i + 1} has an invalid timeline range.")
+            if trans > 0.3 + 0.001:
+                errors.append(f"Segment {i + 1} has an unsupported transition overlap.")
             if i and ti > previous_out + 0.08:
                 errors.append(f"Segment {i + 1} leaves a timeline gap.")
             if i and abs((previous_out - ti) - trans) > 0.08:
@@ -1603,9 +1718,8 @@ def validate_plan(plan: dict, source_duration: float) -> list[str]:
             span = to - ti
             if abs((b - a) / speed - span) > 0.12:
                 errors.append(f"Segment {i + 1} source speed does not match its timeline span.")
-            rendered += span - trans
             previous_out = to
-        if abs(float(plan.get("total_duration") or 0) - rendered) > 0.08:
+        if abs(float(plan.get("total_duration") or 0) - _timeline_duration(segments)) > DURATION_TOLERANCE:
             errors.append("Plan duration does not match its rendered timeline after transition overlap.")
         return errors
     errors, last_out = [], 0.0
@@ -1627,6 +1741,24 @@ def validate_plan(plan: dict, source_duration: float) -> list[str]:
         last_out = max(last_out, to)
     if abs(float(plan.get("total_duration") or 0) - last_out) > 0.2:
         errors.append("Plan duration does not match its segments.")
+    return errors
+
+
+def validate_duration_contract(plan: dict, music_duration: float | None = None) -> list[str]:
+    """Validate duration and music bounds before any FFmpeg process starts."""
+    errors = []
+    requested, planned, timeline = _duration_fields(plan)
+    if abs(planned - timeline) > DURATION_TOLERANCE:
+        errors.append("planned_duration_does_not_match_timeline")
+    if "requested_duration" in plan and abs(requested - planned) > DURATION_TOLERANCE:
+        errors.append("requested_duration_not_reached")
+    if music_duration is not None and plan.get("music_segment"):
+        try:
+            end = float((plan.get("music_segment") or {}).get("end") or 0)
+            if end > float(music_duration) + DURATION_TOLERANCE:
+                errors.append("music_segment_exceeds_available_duration")
+        except (TypeError, ValueError):
+            errors.append("music_segment_invalid")
     return errors
 
 
@@ -1945,6 +2077,12 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
     errors = validate_plan(plan, float(plan.get("source_duration") or 0))
     if errors:
         raise ValueError("Invalid edit plan: " + " ".join(errors))
+    music_duration = None
+    if music_path:
+        music_duration = float(validate_music(music_path)["duration"])
+    duration_errors = validate_duration_contract(plan, music_duration)
+    if duration_errors:
+        raise ValueError("Invalid duration contract: " + " ".join(duration_errors))
     segments = plan["segments"]
     options = normalize_options(options)
     if options.get("audio_mode") == "original_audio":
@@ -1986,7 +2124,7 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
         else:
             crop = f"crop=1080:1920:(in_w-out_w)*{center_x:.4f}:(in_h-out_h)*{center_y:.4f}"
         eq = f"eq=contrast={grading[0]:.3f}:saturation={grading[1]:.3f}:brightness={grading[2]:.3f}" if options["color_grading"] else "null"
-        filters.append(f"[{i}:v]setpts=PTS/{speed:.5f},fps=30,{scale},{crop},{eq},setsar=1[v{i}]")
+        filters.append(f"[{i}:v]setpts=PTS/{speed:.5f},fps={FPS},{scale},{crop},{eq},setsar=1[v{i}]")
         video_labels.append((f"v{i}", float(seg["timeline_out"]) - float(seg["timeline_in"])))
         retain_audio = options.get("audio_mode") in {"dialogue_intro_music", "music_key_dialogue", "original_audio"} or options["keep_original_dialogue"]
         if retain_audio and source_has_audio:
@@ -2015,7 +2153,7 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
     accumulated = video_labels[0][1]
     for i in range(1, len(video_labels)):
         label, length = video_labels[i]
-        trans = float((segments[i].get("transition") or {}).get("duration") or 0.0) if str(plan.get("planner_version", "")).endswith("-2") else min(0.3 if options["smooth_transitions"] else 0.0, accumulated / 3, length / 3)
+        trans = _transition_from_segment(segments[i], i)
         if trans:
             out = f"vx{i}"
             filters.append(f"[{current}][{label}]xfade=transition=fade:duration={trans:.3f}:offset={accumulated - trans:.3f}[{out}]")
@@ -2031,7 +2169,7 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
         audio_accumulated = audio_labels[0][1]
         for i in range(1, len(audio_labels)):
             label, length = audio_labels[i]
-            trans = float((segments[i].get("transition") or {}).get("duration") or 0.0) if str(plan.get("planner_version", "")).endswith("-2") else min(0.3 if options["smooth_transitions"] else 0.0, audio_accumulated / 3, length / 3)
+            trans = _transition_from_segment(segments[i], i)
             out = f"ax{i}"
             if trans:
                 filters.append(f"[{audio}][{label}]acrossfade=d={trans:.3f}:c1=tri:c2=tri[{out}]")
@@ -2059,6 +2197,17 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
     else:
         cmd += ["-an"]
     output.parent.mkdir(parents=True, exist_ok=True)
+    render_contract = {"timeline_version": plan.get("timeline_version", TIMELINE_VERSION),
+                       "fps": FPS, "planned_duration": round(planned_duration, 3),
+                       "transition_source": "edit-plan.json",
+                       "output_trim": round(planned_duration, 3),
+                       "segments": [{"source_id": str(seg.get("source_id") or ""),
+                                     "source_in": seg.get("source_in"), "source_out": seg.get("source_out"),
+                                     "timeline_in": seg.get("timeline_in"), "timeline_out": seg.get("timeline_out"),
+                                     "playback_speed": seg.get("playback_speed", 1.0),
+                                     "transition_overlap": _transition_from_segment(seg, index)}
+                                    for index, seg in enumerate(segments)]}
+    _json_write(output.parent / "render-contract.json", render_contract)
     # Render into a unique candidate and publish only after the complete
     # encode, caption pass and music fingerprint check succeed.  A repeat
     # render must never destroy the last successful result while it is being
@@ -2079,7 +2228,8 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
             subtitle_filter = f"ass=filename='{ass_file}':fontsdir='{fonts_dir}'"
             caption_cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(render_output), "-vf", subtitle_filter,
                            "-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-preset", "medium", "-crf", "19",
-                           "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(candidate)]
+                           "-pix_fmt", "yuv420p", "-r", str(FPS), "-fps_mode", "cfr", "-t", f"{planned_duration:.3f}",
+                           "-c:a", "copy", "-movflags", "+faststart", str(candidate)]
             _ffmpeg_cancel(caption_cmd, cancel=cancel)
         if music_path:
             selected_duration = max(0.0, float(validate_music(music_path)["duration"]) - float(plan.get("music_offset") or 0))
@@ -2092,13 +2242,16 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
             music_verification = None
         if music_path and music_verification.get("status") != "present":
             raise RuntimeError("The selected music could not be confirmed in the rendered audio; the edit was not published as ready.")
+        actual_duration = float(_probe(candidate).get("duration") or 0)
         candidate.replace(output)
     finally:
         candidate.unlink(missing_ok=True)
         if render_output != candidate:
             render_output.unlink(missing_ok=True)
-    return {"render_seconds": round(time.monotonic() - began, 3), "duration": round(planned_duration, 3), "width": 1080, "height": 1920,
-            "fps": 30, "audio": bool(audio), "music_verification": music_verification,
+    return {"render_seconds": round(time.monotonic() - began, 3), "duration": round(planned_duration, 3),
+            "planned_duration": round(planned_duration, 3), "actual_duration": round(actual_duration, 6),
+            "width": 1080, "height": 1920,
+            "fps": FPS, "audio": bool(audio), "music_verification": music_verification,
             "captions": bool(captions_ass and captions_ass.is_file()),
             "caption_file": str(captions_ass.name) if captions_ass and captions_ass.is_file() else "",
             "cpu_ram_vram": "NOT AVAILABLE: runtime metrics are not recorded"}
@@ -2116,6 +2269,40 @@ def _save_job(job: dict):
 def _all_jobs() -> list[dict]:
     with _lock:
         return list(_jobs.values())
+
+
+def _duration_summary(job: dict, plan: dict | None = None, gate: dict | None = None) -> dict:
+    plan = plan if isinstance(plan, dict) else {}
+    gate = gate if isinstance(gate, dict) else {}
+    options = job.get("effective_options") or job.get("options") or {}
+    requested = float(gate.get("requested_duration") or plan.get("requested_duration") or options.get("duration") or 0)
+    planned = float(gate.get("planned_duration") or plan.get("total_duration") or 0)
+    actual_value = gate.get("actual_duration")
+    actual = float(actual_value) if actual_value is not None else None
+    diagnostics = plan.get("timeline_diagnostics") or {}
+    technical = set(str(x) for x in (gate.get("technical_errors") or []))
+    if "requested_vs_planned_duration" in technical or requested - planned > DURATION_TOLERANCE:
+        reason_key = "insufficient_scenes"
+        recommendation_key = "rebuild_timeline"
+    elif "planned_actual_duration" in technical or "duration" in technical:
+        reason_key = "render_duration_mismatch"
+        recommendation_key = "rebuild_timeline"
+    elif technical:
+        reason_key = "quality_gate"
+        recommendation_key = "inspect_diagnostics"
+    else:
+        reason_key = ""
+        recommendation_key = ""
+    return {"requested": round(requested, 3), "planned": round(planned, 3),
+            "actual": round(actual, 3) if actual is not None else None,
+            "available": round(float(diagnostics.get("estimated_selection_capacity") or planned), 3),
+            "candidate_shots": int(diagnostics.get("approved_candidate_shots") or 0),
+            "selected_shots": int(diagnostics.get("selected_shots") or len(plan.get("segments") or [])),
+            "transition_loss": round(float(diagnostics.get("transition_loss") or 0), 3),
+            "beat_alignment_loss": round(float(diagnostics.get("beat_alignment_loss") or 0), 3),
+            "dropped_short_shots": len(diagnostics.get("dropped_short_shots") or []),
+            "reason_key": reason_key, "recommendation_key": recommendation_key,
+            "technical_status": gate.get("technical_status") or "NOT_RUN"}
 
 
 def _load_all():
@@ -2142,17 +2329,25 @@ def public_job(job: dict) -> dict:
     out["selected_music"] = selected
     out["effective_options"] = job.get("effective_options") or job.get("options") or {}
     plan = _json_read(_job_file(job, "edit-plan.json"), {})
+    gate = _json_read(_job_file(job, "quality-gate.json"), {})
+    error_data = _json_read(_job_file(job, "error.json"), {})
+    if not gate and isinstance(error_data, dict):
+        gate = error_data.get("quality_gate") or {}
     if isinstance(plan, dict):
         out["edit_mode"] = plan.get("edit_mode") or out["effective_options"].get("edit_mode")
         out["edit_concept"] = plan.get("semantic_concept", "")
         out["target_character"] = plan.get("target_character", "")
         out["pacing_profile"] = plan.get("pacing_profile", {})
+    out["duration_summary"] = error_data.get("duration_summary") if isinstance(error_data, dict) and isinstance(error_data.get("duration_summary"), dict) else _duration_summary(job, plan, gate)
+    if out.get("status") == "error":
+        out["error"] = "Cinematic edit could not be prepared." if out["duration_summary"].get("reason_key") else "Cinematic edit stopped."
     out["music_status"] = "required" if job.get("status") == "music_required" else "selected" if selected.get("title") else "original_audio" if (job.get("options") or {}).get("music_source") == "original_audio" else "pending"
     out["files"] = {}
     for name, public_name in (("result.mp4", "video"), ("edit-plan.json", "plan"), ("music-analysis.json", "music_analysis"),
                               ("scene-analysis.json", "scenes"), ("event-analysis.json", "events"), ("ai-scene-selection.json", "ai_scene_selection"),
                               ("license.json", "license"), ("metrics.json", "metrics"), ("captions-timeline.json", "captions_timeline"),
-                              ("captions.ass", "captions_ass"), ("captions.srt", "captions_srt"), ("quality-gate.json", "quality_gate")):
+                              ("captions.ass", "captions_ass"), ("captions.srt", "captions_srt"), ("quality-gate.json", "quality_gate"),
+                              ("error.json", "error"), ("render-contract.json", "render_contract")):
         if _job_file(job, name).is_file():
             out["files"][public_name] = f"/media/cinematic/{job['id']}/{name}"
     return out
@@ -2227,6 +2422,8 @@ def rerender(uid: str, jid: str, changes: dict | None = None) -> dict:
         raise FileNotFoundError("Cinematic edit not found.")
     if not _job_file(job, "edit-plan.json").is_file():
         raise ValueError("There is no saved edit plan to render again.")
+    if job.get("status") != "done":
+        raise ValueError("This edit has no validated render to render again; use Rebuild edit instead.")
     if isinstance(changes, dict):
         old = normalize_options(job.get("effective_options") or job.get("options") or {})
         allowed = {key: changes[key] for key in ("caption_mode", "caption_style", "caption_language", "caption_size", "caption_position",
@@ -2274,6 +2471,26 @@ def rerender(uid: str, jid: str, changes: dict | None = None) -> dict:
                                                          "word_count": len(timeline_words)})
                 _json_write(_job_file(job, "edit-plan.json"), plan)
     job.update(status="queued", stage="Waiting to render saved plan", progress=0.0, error="", cancel_requested=False, repeat=True)
+    _save_job(job)
+    _queue.put(jid)
+    return public_job(job)
+
+
+def rebuild(uid: str, jid: str) -> dict:
+    """Replan a failed edit from its persisted source, analyses and local caches."""
+    job = get_job(uid, jid)
+    if not job:
+        raise FileNotFoundError("Cinematic edit not found.")
+    if job.get("status") in ("queued", "running"):
+        raise ValueError("This cinematic edit is still running.")
+    if not Path(str(job.get("source_path") or "")).is_file():
+        raise ValueError("The saved source video is no longer available; upload it again to rebuild the edit.")
+    required = ("scene-analysis.json", "event-analysis.json", "ai-scene-selection.json", "music-analysis.json")
+    missing = [name for name in required if not _job_file(job, name).is_file()]
+    if missing:
+        raise ValueError("Saved analysis is incomplete; upload the source again to rebuild the edit.")
+    job.update(status="queued", stage="Waiting to rebuild edit plan", progress=0.0, error="",
+               cancel_requested=False, repeat=False, rebuild_plan=True)
     _save_job(job)
     _queue.put(jid)
     return public_job(job)
@@ -2486,16 +2703,20 @@ def quality_gate(plan: dict, output: Path, captions_timeline: Path | None = None
     requested_duration = float(plan.get("requested_duration") or plan.get("total_duration") or 0)
     planned_duration = float(plan.get("total_duration") or 0)
     actual_duration = None
-    checks["requested_planned_duration"] = abs(requested_duration - planned_duration) <= 2 / 30 + 0.01
+    timeline_duration = _timeline_duration(plan.get("segments") or [])
+    checks["requested_planned_duration"] = abs(requested_duration - planned_duration) <= DURATION_TOLERANCE
     if not checks["requested_planned_duration"]:
         technical_errors.append("requested_vs_planned_duration")
+    checks["planned_timeline_duration"] = abs(planned_duration - timeline_duration) <= DURATION_TOLERANCE
+    if not checks["planned_timeline_duration"]:
+        technical_errors.append("planned_timeline_duration")
     try:
         probe = _probe(output)
         checks["mp4_bytes"] = output.is_file() and output.stat().st_size > 0
         checks["vertical_geometry"] = probe.get("width") == 1080 and probe.get("height") == 1920
         checks["audio_presence"] = bool(probe.get("has_audio"))
         actual_duration = float(probe.get("duration") or 0)
-        checks["planned_actual_duration"] = abs(actual_duration - planned_duration) <= 2 / 30 + 0.08
+        checks["planned_actual_duration"] = abs(actual_duration - planned_duration) <= DURATION_TOLERANCE
         checks["duration"] = checks["planned_actual_duration"]
     except Exception as e:  # noqa: BLE001
         checks.update(mp4_bytes=False, vertical_geometry=False, audio_presence=False, planned_actual_duration=False, duration=False)
@@ -2506,6 +2727,9 @@ def quality_gate(plan: dict, output: Path, captions_timeline: Path | None = None
     checks["source_boundaries"] = not validate_plan(plan, float(plan.get("source_duration") or 0))
     checks["transition_overlap"] = all(float((x.get("transition") or {}).get("duration") or 0) <= 0.3 for x in segments)
     checks["beat_alignment"] = all(x.get("sync_error_frames") is None or abs(float(x["sync_error_frames"])) <= 1.5 for x in segments)
+    music_segment = plan.get("music_segment") or {}
+    music_duration = float(plan.get("music_duration") or 0)
+    checks["music_duration"] = not music_segment or not music_duration or float(music_segment.get("end") or 0) <= music_duration + DURATION_TOLERANCE
     caption_meta = plan.get("captions") or {}
     has_timeline = bool(captions_timeline and captions_timeline.is_file())
     has_ass = bool(captions_ass and captions_ass.is_file())
@@ -2520,11 +2744,30 @@ def quality_gate(plan: dict, output: Path, captions_timeline: Path | None = None
         artistic_warnings.append("No AI edit concept was recorded; mechanical validation does not establish artistic coherence.")
     return {"technical_status": "PASS" if not technical_errors else "FAIL", "checks": checks,
             "requested_duration": requested_duration, "planned_duration": planned_duration,
+            "timeline_duration": timeline_duration,
             "actual_duration": actual_duration,
             "technical_errors": technical_errors, "artistic_warnings": artistic_warnings,
             "errors": technical_errors,
             "artistic_acceptance": "NOT_RUN", "listening_acceptance": "NOT_RUN", "rights_acceptance": "SEPARATE_LICENSE_GATE",
             "note": "Mechanical media and plan checks only; a contact sheet or decoded MP4 does not establish artistic, listening, owner or publication acceptance."}
+
+
+def _ensure_renderable_plan(plan: dict, source_duration: float, music_path: Path | None = None):
+    plan_errors = validate_plan(plan, source_duration)
+    if plan_errors:
+        raise ValueError("Invalid edit plan: " + " ".join(plan_errors))
+    music_duration = float(validate_music(music_path)["duration"]) if music_path else None
+    duration_errors = validate_duration_contract(plan, music_duration)
+    if not duration_errors:
+        return
+    requested, planned, _timeline = _duration_fields(plan)
+    if "requested_duration_not_reached" in duration_errors:
+        available = float((plan.get("timeline_diagnostics") or {}).get("estimated_selection_capacity") or planned)
+        raise InsufficientSuitableFootage(
+            f"Insufficient suitable footage for a {int(requested)} second edit: approved, content-compatible "
+            f"shots provide about {available:.1f} seconds. Choose a shorter edit or change the edit focus."
+        )
+    raise ValueError("Invalid duration contract: " + " ".join(duration_errors))
 
 
 def _run_job(job: dict):
@@ -2542,11 +2785,60 @@ def _run_job(job: dict):
         options["keep_original_dialogue"] = (options["keep_original_dialogue"] or fallback_original) and source_info["has_audio"]
         saved_plan_path = _job_file(job, "edit-plan.json")
         saved_plan = _json_read(saved_plan_path, {}) if job.get("repeat") and saved_plan_path.is_file() else {}
+        rebuild_requested = bool(job.pop("rebuild_plan", False))
         # A current planner may still produce a deliberately invalid plan in
         # tests or after an interrupted edit; let Quality Gate reject that
         # plan.  Only plans from an older planner need automatic rebuilding.
         saved_plan_compatible = bool(saved_plan.get("planner_version") == PLANNER_VERSION)
-        if job.get("repeat") and saved_plan_path.is_file() and saved_plan_compatible:
+        if rebuild_requested:
+            _update(job, status="running", stage="Rebuilding edit plan from saved analysis", progress=0.18)
+            selected = job.get("selected_music") or {}
+            music = None
+            music_path = None
+            if options["music_source"] != "original_audio":
+                music_path = Path(str(selected.get("path") or ""))
+                if music_path and not music_path.is_file() and selected.get("track_id") not in ("", "upload"):
+                    music_path = _track_path(_library_track(selected["track_id"]))
+                if not selected or not music_path.is_file():
+                    raise MusicRequired("Music is required for Auto, Library or Upload. The saved job has no selected music.")
+                decoded = verify_music_decode(music_path, cancel=cancelled)
+                music_analysis = _json_read(_job_file(job, "music-analysis.json"), {})
+                if not isinstance(music_analysis, dict) or not music_analysis.get("duration"):
+                    music_analysis = analyze_audio(music_path)
+                music = {**selected, "path": str(music_path), "analysis": music_analysis, "sha256": decoded["sha256"]}
+            else:
+                music_analysis = None
+            scenes_data = _json_read(_job_file(job, "scene-analysis.json"), {})
+            events_data = _json_read(_job_file(job, "event-analysis.json"), {})
+            scenes = scenes_data.get("scenes") if isinstance(scenes_data, dict) else None
+            events = events_data.get("events") if isinstance(events_data, dict) else None
+            if not isinstance(scenes, list) or not isinstance(events, list) or not scenes or not events:
+                raise ValueError("Saved scene analysis is incomplete; the source must be analyzed again before rebuilding.")
+            ai_notes = _json_read(_job_file(job, "ai-scene-selection.json"), {"status": "not_requested"})
+            if not isinstance(ai_notes, dict):
+                ai_notes = {"status": "not_requested"}
+            reason = job.get("selection_reason") or "Saved local music and scene analysis reused."
+            warnings = [x for x in (job.get("warnings") or [])
+                        if "selected event sequence ended" not in str(x).lower()]
+            plan = make_plan(source, source_info, scenes, options, music, music_analysis, reason, warnings,
+                             ai_notes=ai_notes, events=events)
+            if music:
+                selected_with_segment = dict(music)
+                selected_with_segment["segment"] = plan.get("music_segment")
+                _update(job, selected_music={k: v for k, v in selected_with_segment.items() if k != "analysis"})
+            _ensure_renderable_plan(plan, source_info["duration"], music_path)
+            dialogue = _read_existing_dialogue(job)
+            caption_result = prepare_captions(job, source, plan, options, existing_words=dialogue, cancel=cancelled)
+            plan["captions"] = caption_result
+            _json_write(_job_file(job, "edit-plan.json"), plan)
+            license_meta = (music or {}).get("license") if music else {"status": "not_applicable", "reason": "Original Audio"}
+            _json_write(_job_file(job, "license.json"), {"track_id": (music or {}).get("track_id", ""), "license": license_meta,
+                                                             "attribution": (license_meta or {}).get("attribution", "")})
+            _update(job, stage="Rendering rebuilt MP4", progress=0.68, warnings=warnings, selection_reason=reason)
+            render_candidate = _job_file(job, f"result.candidate-{uuid.uuid4().hex}.mp4")
+            metrics = render_plan(source, music_path, plan, options, render_candidate,
+                                  captions_ass=_job_file(job, "captions.ass"), cancel=cancelled)
+        elif job.get("repeat") and saved_plan_path.is_file() and saved_plan_compatible:
             _update(job, status="running", stage="Rendering saved edit plan", progress=0.55)
             plan = saved_plan
             if job.pop("rebuild_captions", False):
@@ -2563,6 +2855,7 @@ def _run_job(job: dict):
                 verify_music_decode(music_path, cancel=cancelled)
             elif options["music_source"] != "original_audio":
                 raise MusicRequired("Music is required for Auto, Library or Upload. The saved job has no selected music.")
+            _ensure_renderable_plan(plan, source_info["duration"], music_path)
             render_candidate = _job_file(job, f"result.candidate-{uuid.uuid4().hex}.mp4")
             metrics = render_plan(source, music_path, plan, options, render_candidate,
                                   captions_ass=_job_file(job, "captions.ass"), cancel=cancelled)
@@ -2604,9 +2897,7 @@ def _run_job(job: dict):
                 selected_with_segment = dict(music)
                 selected_with_segment["segment"] = plan.get("music_segment")
                 _update(job, selected_music={k: v for k, v in selected_with_segment.items() if k != "analysis"})
-            plan_errors = validate_plan(plan, source_info["duration"])
-            if plan_errors:
-                raise ValueError("Invalid edit plan: " + " ".join(plan_errors))
+            _ensure_renderable_plan(plan, source_info["duration"], Path(music["path"]) if music else None)
             caption_result = prepare_captions(job, source, plan, options, existing_words=dialogue, cancel=cancelled)
             plan["captions"] = caption_result
             _json_write(_job_file(job, "edit-plan.json"), plan)
@@ -2640,8 +2931,12 @@ def _run_job(job: dict):
         if render_candidate:
             render_candidate.unlink(missing_ok=True)
         message = str(e)
+        summary = _duration_summary(job, locals().get("plan") if isinstance(locals().get("plan"), dict) else {}, {})
+        summary["reason_key"] = "insufficient_scenes"
+        summary["recommendation_key"] = "rebuild_timeline"
         _json_write(_job_file(job, "error.json"), {"kind": "insufficient_suitable_footage", "error": message,
                                                      "requested_duration": options.get("duration"),
+                                                     "duration_summary": summary,
                                                      "suggestion": "Choose a shorter edit or change the edit focus."})
         _update(job, status="error", stage="Insufficient suitable footage", progress=0.95, error=message,
                 repeat=False, finished_at=_now())

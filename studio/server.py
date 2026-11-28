@@ -1663,6 +1663,16 @@ def cinematic_cancel(jid: str):
         raise HTTPException(404, str(e))
 
 
+@app.post("/api/cinematic/jobs/{jid}/rebuild")
+def cinematic_rebuild(jid: str):
+    try:
+        return cinematic.rebuild(ctx.uid(), jid)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
 @app.post("/api/cinematic/jobs/{jid}/render")
 def cinematic_render_again(jid: str, body: dict = Body(default={})):
     try:

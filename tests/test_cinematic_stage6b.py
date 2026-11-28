@@ -105,6 +105,43 @@ check("captioned vertical MP4 has audio and exact short-plan duration", caption_
       abs(float(caption_probe["format"].get("duration") or 0) - 2.0) <= 0.15)
 check("captioned MP4 full decode succeeds", True)
 
+transition_plan = {"planner_version": cinematic.PLANNER_VERSION, "source_duration": 2, "total_duration": 2,
+                   "segments": [
+                       {"source_id": "transition-a", "source_in": 0, "source_out": 1.2, "approved_source_start": 0,
+                        "approved_source_end": 1.2, "timeline_in": 0, "timeline_out": 1.2, "playback_speed": 1.0,
+                        "transition": {"duration": 0}, "crop": {"mode": "letterbox_safe"}},
+                       {"source_id": "transition-b", "source_in": 1, "source_out": 2, "approved_source_start": 1,
+                        "approved_source_end": 2, "timeline_in": 1, "timeline_out": 2, "playback_speed": 1.0,
+                        "transition": {"duration": 0.2}, "crop": {"mode": "letterbox_safe"}},
+                   ]}
+transition_output = media_dir / "transition.mp4"
+transition_metrics = cinematic.render_plan(caption_source, None, transition_plan,
+                                           cinematic.normalize_options({"duration": 15, "music_source": "original_audio",
+                                                                        "audio_mode": "original_audio"}), transition_output)
+transition_probe = json.loads(cinematic.media.run(["ffprobe", "-v", "error", "-print_format", "json",
+                                                   "-show_format", str(transition_output)]))
+transition_contract = json.loads((media_dir / "render-contract.json").read_text(encoding="utf-8"))
+check("renderer consumes the saved transition overlap contract", transition_contract["transition_source"] == "edit-plan.json" and
+      transition_contract["segments"][1]["transition_overlap"] == 0.2)
+check("crossfade render stays within two 30fps frames of the plan", abs(transition_metrics["actual_duration"] - 2.0) <= cinematic.DURATION_TOLERANCE and
+      abs(float(transition_probe["format"].get("duration") or 0) - 2.0) <= cinematic.DURATION_TOLERANCE)
+
+speed_plan = {"planner_version": cinematic.PLANNER_VERSION, "source_duration": 2, "total_duration": 2,
+              "segments": [{"source_id": "speed", "source_in": 0, "source_out": 1.6,
+                            "approved_source_start": 0, "approved_source_end": 2, "timeline_in": 0,
+                            "timeline_out": 2, "playback_speed": 0.8, "transition": {"duration": 0},
+                            "crop": {"mode": "letterbox_safe"}}]}
+speed_output = media_dir / "speed.mp4"
+speed_metrics = cinematic.render_plan(caption_source, None, speed_plan,
+                                      cinematic.normalize_options({"duration": 15, "music_source": "original_audio",
+                                                                   "audio_mode": "original_audio", "speed_ramp": True}), speed_output)
+speed_probe = json.loads(cinematic.media.run(["ffprobe", "-v", "error", "-print_format", "json",
+                                               "-show_format", str(speed_output)]))
+speed_contract = json.loads((media_dir / "render-contract.json").read_text(encoding="utf-8"))
+check("playback speed is carried into the renderer contract", speed_contract["segments"][0]["playback_speed"] == 0.8)
+check("speed-corrected render stays within two 30fps frames of the plan", abs(speed_metrics["actual_duration"] - 2.0) <= cinematic.DURATION_TOLERANCE and
+      abs(float(speed_probe["format"].get("duration") or 0) - 2.0) <= cinematic.DURATION_TOLERANCE)
+
 # Stage 6B.1: the mixer and captions must consume the same retained speech
 # selection.  The fixture has intro, key and non-key source intervals with
 # distinct word timestamps, so retaining the whole source audio would fail the
@@ -243,6 +280,35 @@ finally:
 check("Style-only rerender reuses persisted timestamps without ASR", rerender_job.get("rebuild_captions") is False and
       "Вступление" in (rerender_dir / "captions.srt").read_text(encoding="utf-8") and
       not (rerender_dir / "caption-asr-cache.json").is_file())
+
+# Failed jobs rebuild from their persisted source and analysis instead of
+# re-rendering the invalid saved plan or asking the AI again.
+rebuild_dir = media_dir / "rebuild-job"
+rebuild_dir.mkdir()
+for name in ("edit-plan.json", "scene-analysis.json", "event-analysis.json", "ai-scene-selection.json", "music-analysis.json"):
+    (rebuild_dir / name).write_text("{}", encoding="utf-8")
+rebuild_job = {"id": "cin-rebuild", "user": "u_local", "dir": str(rebuild_dir), "source_path": str(dialogue_source),
+               "source": {"name": "dialogue-source.mp4", "duration": 6}, "options": plain_options,
+               "effective_options": plain_options, "selected_music": {"title": "Original Audio"},
+               "status": "error", "stage": "Quality gate failed", "progress": 0.95,
+               "cancel_requested": False, "repeat": False, "error": "Quality Gate failed: duration"}
+cinematic._jobs["cin-rebuild"] = rebuild_job
+queued_ids = []
+original_queue_put = cinematic._queue.put
+cinematic._queue.put = lambda jid: queued_ids.append(jid)
+try:
+    rebuilt_public = cinematic.rebuild("u_local", "cin-rebuild")
+finally:
+    cinematic._queue.put = original_queue_put
+check("failed edits expose a rebuild action that reuses saved analysis", rebuild_job["status"] == "queued" and
+      rebuild_job.get("rebuild_plan") is True and queued_ids == ["cin-rebuild"] and
+      rebuilt_public["files"]["plan"].endswith("/edit-plan.json"))
+try:
+    cinematic.rerender("u_local", "cin-rebuild")
+except ValueError as exc:
+    check("Render Again is refused for a failed unvalidated plan", "Rebuild edit" in str(exc))
+else:
+    check("Render Again is refused for a failed unvalidated plan", False)
 
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

@@ -33,9 +33,9 @@ work = DATA / "fixtures"
 work.mkdir()
 source = work / "source.mp4"
 music = work / "music.wav"
-subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=320x180:r=30:d=5",
-                "-f", "lavfi", "-i", "color=c=blue:s=320x180:r=30:d=5", "-f", "lavfi", "-i", "color=c=green:s=320x180:r=30:d=5",
-                "-f", "lavfi", "-i", "sine=frequency=220:sample_rate=22050:d=15",
+subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=320x180:r=30:d=5.5",
+                "-f", "lavfi", "-i", "color=c=blue:s=320x180:r=30:d=5.5", "-f", "lavfi", "-i", "color=c=green:s=320x180:r=30:d=5.5",
+                "-f", "lavfi", "-i", "sine=frequency=220:sample_rate=22050:d=16.5",
                 "-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]", "-map", "[v]", "-map", "3:a",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(source)], check=True)
 sr = 22050
@@ -79,7 +79,7 @@ scene_dir = work / "scene-out"
 scenes = cinematic.analyze_scenes(source, scene_dir)
 check("scene detection streams frames and excludes no valid colour scene", len(scenes) >= 2 and all("motion_intensity" in s for s in scenes))
 plan = cinematic.make_plan(source, cinematic.validate_video(source), scenes, opts, selected, analysis1, reason, warnings)
-check("edit plan contains bounded segments and beat references", not cinematic.validate_plan(plan, 15.0) and plan["segments"] and "source_in" in plan["segments"][0])
+check("edit plan contains bounded segments and beat references", not cinematic.validate_plan(plan, cinematic.validate_video(source)["duration"]) and plan["segments"] and "source_in" in plan["segments"][0])
 
 # Stage 6A.1 regression: the beat marker must become the actual hard-cut
 # boundary, including the music offset, rather than remaining JSON metadata.
@@ -89,7 +89,7 @@ beat_opts = cinematic.normalize_options({"duration": 15, "music_source": "librar
                                          "effects_intensity": "light"})
 beat_plan = cinematic.make_plan(source, cinematic.validate_video(source), scenes, beat_opts, selected, known_beats, reason, [])
 beat_cuts = [s for s in beat_plan["segments"] if s["music_beat_reference"] is not None]
-check("beat sync offset controls hard-cut timeline boundaries", not cinematic.validate_plan(beat_plan, 15.0) and
+check("beat sync offset controls hard-cut timeline boundaries", not cinematic.validate_plan(beat_plan, cinematic.validate_video(source)["duration"]) and
       [round(s["timeline_in"], 3) for s in beat_cuts] == [5.0, 10.0] and
       [round(s["music_beat_reference"], 3) for s in beat_cuts] == [6.0, 11.0] and
       all(abs(float(s["sync_error_frames"])) <= 1 for s in beat_cuts))
@@ -136,7 +136,7 @@ for index in range(5):
     semantic_events.append({"id": f"semantic-event-{index + 1:02d}", "start": start, "end": start + 5.0,
                             "duration": 5.0, "shot_ids": [sid], "dialogue": "", "focus_mode": "saliency_or_center",
                             "reframe_center_x": 0.5, "reframe_center_y": 0.5, "local_discovery_score": 0.5})
-semantic_info = {"duration": 25.0, **cinematic.validate_video(source)}
+semantic_info = {**cinematic.validate_video(source), "duration": 25.0}
 semantic_a = cinematic.make_plan(source, semantic_info, semantic_scenes, off_opts, selected, known_beats,
                                  reason, [], ai_notes={"status": "available", "concept": "opening arc", "recommendations": [
                                      {"event_id": "semantic-event-01", "score": 100, "phase": "hook"}]}, events=semantic_events)
@@ -196,19 +196,18 @@ check("saved plan can be rendered again without re-analysis", repeat_out.is_file
 short_music = work / "short-track.wav"
 short_t = np.arange(sr, dtype=np.float32) / sr
 sf.write(short_music, 0.12 * np.sin(2 * np.pi * 330 * short_t), sr, subtype="PCM_16")
-short_out = work / "short-track-padded.mp4"
 short_opts = cinematic.normalize_options({"duration": 15, "music_source": "library", "music_track_id": track["id"],
                                           "music_start_offset": 0, "beat_sync": False, "effects_intensity": "light"})
 short_plan = cinematic.make_plan(source, cinematic.validate_video(source), scenes, short_opts, selected, known_beats, reason, [])
-cinematic.render_plan(source, short_music, short_plan, short_opts, short_out)
-short_probe = json.loads(cinematic.media.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(short_out)]))
-short_duration = float(short_probe["format"].get("duration") or 0)
-short_audio = next((s for s in short_probe["streams"] if s["codec_type"] == "audio"), {})
-check("short music is padded with silence rather than unexpectedly looped", abs(short_duration - 15.0) <= 2 / 30 + 0.04 and
-      abs(float(short_audio.get("duration") or 0) - short_duration) <= 0.12)
+try:
+    cinematic.render_plan(source, short_music, short_plan, short_opts, work / "should-not-render-short-music.mp4")
+except ValueError as exc:
+    check("short music is rejected before rendering when the selected span is unavailable", "music_segment_exceeds_available_duration" in str(exc))
+else:
+    check("short music is rejected before rendering when the selected span is unavailable", False)
 
 try:
-    cinematic.render_plan(source, short_music, off_plan, off_opts, work / "cancelled.mp4", cancel=lambda: True)
+    cinematic.render_plan(source, Path(selected["path"]), off_plan, off_opts, work / "cancelled.mp4", cancel=lambda: True)
 except cinematic.Cancelled:
     check("cinematic FFmpeg render cancellation stops the job", True)
 else:

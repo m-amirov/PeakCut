@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -88,7 +88,7 @@ input::placeholder{color:var(--faint)}
 <aside class="side">
   <a href="/" aria-label="PeakCut home"><img src="/brand/logo-light.svg" alt="PeakCut"></a>
   <div>
-    <h1>Clips from every stream, <em>without watching all of it.</em></h1>
+    <h1 id="pitch">Clips from every stream, <em>without watching all of it.</em></h1>
     <ul>
       <li><svg viewBox="0 0 256 256" aria-hidden="true"><path d="M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z"/></svg><span>Records live streams and clips them as they happen</span></li>
       <li><svg viewBox="0 0 256 256" aria-hidden="true"><path d="M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z"/></svg><span>Vertical shorts with word-by-word captions and a hook</span></li>
@@ -101,10 +101,10 @@ input::placeholder{color:var(--faint)}
   <a href="/"><img class="mobile-logo" src="/brand/logo.svg" alt="PeakCut"></a>
   <div class="check" id="check" role="status">
     <div class="ico"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="M224,48H32a8,8,0,0,0-8,8V192a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A8,8,0,0,0,224,48Zm-96,85.15L52.57,64H203.43ZM98.71,128,40,181.81V74.19Zm11.84,10.85,12,11.05a8,8,0,0,0,10.82,0l12-11.05,58,53.15H52.57ZM157.29,128,216,74.18V181.82Z"/></svg></div>
-    <h2>Confirm your email</h2>
-    <p>We sent a link to <b id="ckmail">your email</b>.</p>
-    <p>Open it and press the link, then come back here and sign in.</p>
-    <p class="small">Nothing there? Check spam or promotions. Signing in again sends a new link. · <a href="/login" id="ckback">Back to sign in</a></p>
+    <h2 id="checkTitle">Confirm your email</h2>
+    <p id="checkSent">We sent a link to <b id="ckmail">your email</b>.</p>
+    <p id="checkOpen">Open it and press the link, then come back here and sign in.</p>
+    <p class="small" id="checkHint">Nothing there? Check spam or promotions. Signing in again sends a new link. · <a href="/login" id="ckback">Back to sign in</a></p>
   </div>
   <div id="formside">
   <h2 id="h"></h2><p id="p"></p>
@@ -114,9 +114,9 @@ input::placeholder{color:var(--faint)}
   <div class="or" id="or" hidden>or use your email</div>
   <form id="f" novalidate>
     <div class="err" id="err" role="alert"></div>
-    <label id="namebox">Your name<input id="name" autocomplete="name" placeholder="What should we call you?" maxlength="80"></label>
-    <label>Email<input id="email" type="email" autocomplete="email" placeholder="you@example.com" required></label>
-    <label><span class="pwrow">Password<a href="/reset" id="forgot">Forgot password?</a></span><span class="pwbox"><input id="password" type="password" required minlength="8" placeholder="Your password"><button type="button" id="pwshow" aria-label="Show password" aria-pressed="false"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="M247.31,124.76c-.35-.79-8.82-19.58-27.65-38.41C194.57,61.26,162.88,48,128,48S61.43,61.26,36.34,86.35C17.51,105.18,9,124,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208s66.57-13.26,91.66-38.34c18.83-18.83,27.3-37.61,27.65-38.4A8,8,0,0,0,247.31,124.76ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.47,133.47,0,0,1,25,128,133.33,133.33,0,0,1,48.07,97.25C70.33,75.19,97.22,64,128,64s57.67,11.19,79.93,33.25A133.46,133.46,0,0,1,231.05,128C223.84,141.46,192.43,192,128,192Zm0-112a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Z"/></svg></button></span><span class="hint" id="pwhint">At least 8 characters.</span></label>
+    <label id="namebox"><span id="nameLabel">Your name</span><input id="name" autocomplete="name" placeholder="What should we call you?" maxlength="80"></label>
+    <label><span id="emailLabel">Email</span><input id="email" type="email" autocomplete="email" placeholder="you@example.com" required></label>
+    <label><span class="pwrow"><span id="passwordLabel">Password</span><a href="/reset" id="forgot">Forgot password?</a></span><span class="pwbox"><input id="password" type="password" required minlength="8" placeholder="Your password"><button type="button" id="pwshow" aria-label="Show password" aria-pressed="false"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="M247.31,124.76c-.35-.79-8.82-19.58-27.65-38.41C194.57,61.26,162.88,48,128,48S61.43,61.26,36.34,86.35C17.51,105.18,9,124,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208s66.57-13.26,91.66-38.34c18.83-18.83,27.3-37.61,27.65-38.4A8,8,0,0,0,247.31,124.76ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.47,133.47,0,0,1,25,128,133.33,133.33,0,0,1,48.07,97.25C70.33,75.19,97.22,64,128,64s57.67,11.19,79.93,33.25A133.46,133.46,0,0,1,231.05,128C223.84,141.46,192.43,192,128,192Zm0-112a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Z"/></svg></button></span><span class="hint" id="pwhint">At least 8 characters.</span></label>
     <button class="btn primary" id="go"></button>
   </form>
   <p class="legal" id="legal">By continuing you agree to our <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy</a>.</p>
@@ -126,31 +126,50 @@ input::placeholder{color:var(--faint)}
 <script>
 document.getElementById("year").textContent = new Date().getFullYear();
 const $ = id => document.getElementById(id), up = location.pathname === "/signup";
+const UI_LOCALE = (() => { try { return localStorage.getItem("peakcut_ui_locale") === "en" ? "en" : "ru"; } catch { return "ru"; } })();
+document.documentElement.lang = UI_LOCALE;
+const tr = (en, ru) => UI_LOCALE === "ru" ? ru : en;
+const text = (id, en, ru) => { const el = $(id); if (el) el.textContent = tr(en, ru); };
+document.title = tr("Sign in to PeakCut", "Войти в PeakCut");
+$("pitch").innerHTML = tr("Clips from every stream, <em>without watching all of it.</em>", "Клипы из каждого эфира, <em>без просмотра всего эфира.</em>");
+const pitch = ["Records live streams and clips them as they happen", "Vertical shorts with word-by-word captions and a hook", "Free and open source: runs on your own AI key"];
+const pitchRu = ["Записывает эфиры и вырезает клипы по ходу трансляции", "Вертикальные ролики с субтитрами по словам и ярким началом", "Бесплатный проект с открытым кодом, работающий на вашем ключе ИИ"];
+document.querySelectorAll(".side li span").forEach((el, i) => { el.textContent = tr(pitch[i], pitchRu[i]); });
+document.querySelector(".side small").innerHTML = `© <span id="year">${new Date().getFullYear()}</span> PeakCut · <a href="/privacy" style="color:inherit">${tr("Privacy", "Конфиденциальность")}</a> · <a href="/terms" style="color:inherit">${tr("Terms", "Условия")}</a>`;
+text("checkTitle", "Confirm your email", "Подтвердите email");
+$("checkSent").innerHTML = tr("We sent a link to <b id=\"ckmail\">your email</b>.", "Мы отправили ссылку на адрес <b id=\"ckmail\">ваш email</b>.");
+text("checkOpen", "Open it and press the link, then come back here and sign in.", "Откройте письмо и перейдите по ссылке, затем вернитесь сюда и войдите.");
+$("checkHint").innerHTML = `${tr("Nothing there? Check spam or promotions. Signing in again sends a new link.", "Письма нет? Проверьте спам и рассылки. Новый вход отправит новую ссылку.")} · <a href="/login" id="ckback">${tr("Back to sign in", "Вернуться ко входу")}</a>`;
+text("nameLabel", "Your name", "Ваше имя"); text("emailLabel", "Email", "Email"); text("passwordLabel", "Password", "Пароль");
+$("name").placeholder = tr("What should we call you?", "Как к вам обращаться?"); $("email").placeholder = "you@example.com";
+text("pwhint", "At least 8 characters.", "Не менее 8 символов.");
+text("forgot", "Forgot password?", "Забыли пароль?"); text("or", "or use your email", "или используйте email");
+$("legal").innerHTML = `${tr("By continuing you agree to our", "Продолжая, вы соглашаетесь с")} <a href="/terms">${tr("Terms", "условиями")}</a> ${tr("and", "и")} <a href="/privacy">${tr("Privacy Policy", "политикой конфиденциальности")}</a>.`;
 const next = new URLSearchParams(location.search).get("next");
 const dest = next && /^\/(?![\/\\])[^\\\t\r\n]*$/.test(next) ? next : "/app";
-document.title = up ? "Create your PeakCut account" : "Sign in to PeakCut";
-$("h").textContent = up ? "Create your account" : "Welcome back";
-$("p").textContent = up ? "Start clipping in a couple of minutes." : "Sign in to get back to your clips.";
-$("go").textContent = up ? "Create account" : "Sign in";
-$("gtext").textContent = up ? "Sign up with Google" : "Sign in with Google";
+document.title = up ? tr("Create your PeakCut account", "Создать аккаунт PeakCut") : tr("Sign in to PeakCut", "Войти в PeakCut");
+$("h").textContent = up ? tr("Create your account", "Создайте аккаунт") : tr("Welcome back", "С возвращением");
+$("p").textContent = up ? tr("Start clipping in a couple of minutes.", "Начните создавать клипы за пару минут.") : tr("Sign in to get back to your clips.", "Войдите, чтобы вернуться к своим клипам.");
+$("go").textContent = up ? tr("Create account", "Создать аккаунт") : tr("Sign in", "Войти");
+$("gtext").textContent = up ? tr("Sign up with Google", "Зарегистрироваться через Google") : tr("Sign in with Google", "Войти через Google");
 $("namebox").hidden = !up; $("pwhint").hidden = !up; $("forgot").hidden = up;
 $("password").autocomplete = up ? "new-password" : "current-password";
-$("password").placeholder = up ? "Choose a password" : "Your password";
+$("password").placeholder = up ? tr("Choose a password", "Придумайте пароль") : tr("Your password", "Ваш пароль");
 $("pwshow").addEventListener("click", () => {
   const p = $("password"), on = p.type === "password";
   p.type = on ? "text" : "password";
   $("pwshow").setAttribute("aria-pressed", String(on));
-  $("pwshow").setAttribute("aria-label", on ? "Hide password" : "Show password");
+  $("pwshow").setAttribute("aria-label", on ? tr("Hide password", "Скрыть пароль") : tr("Show password", "Показать пароль"));
   p.focus();
 });
-$("swap").innerHTML = up ? 'Already have an account? <a href="/login">Sign in</a>' : 'New to PeakCut? <a href="/signup">Create an account</a>';
+$("swap").innerHTML = up ? `${tr("Already have an account?", "Уже есть аккаунт?")} <a href="/login">${tr("Sign in", "Войти")}</a>` : `${tr("New to PeakCut?", "В PeakCut впервые?")} <a href="/signup">${tr("Create an account", "Создать аккаунт")}</a>`;
 $("google").href = "/auth/google/start?next=" + encodeURIComponent(dest);
 const fail = m => { $("err").textContent = m; $("err").classList.add("on"); };
 const qs = new URLSearchParams(location.search);
-if (qs.get("error") === "google") fail("Google sign-in didn't finish. Try again, or use your email.");
+if (qs.get("error") === "google") fail(tr("Google sign-in didn't finish. Try again, or use your email.", "Вход через Google не завершён. Попробуйте ещё раз или используйте email."));
 if (qs.get("verify_error")) fail(qs.get("verify_error"));
-if (qs.get("confirm")) fail("Confirm your email first. Sign in and we'll send you a new link.");
-if (qs.get("verified")) { const n = document.createElement("div"); n.className = "note"; n.textContent = "Email confirmed. Sign in to start clipping."; $("f").prepend(n); }
+if (qs.get("confirm")) fail(tr("Confirm your email first. Sign in and we'll send you a new link.", "Сначала подтвердите email. Войдите, и мы отправим новую ссылку."));
+if (qs.get("verified")) { const n = document.createElement("div"); n.className = "note"; n.textContent = tr("Email confirmed. Sign in to start clipping.", "Email подтверждён. Войдите, чтобы начать создавать клипы."); $("f").prepend(n); }
 const checkEmail = mail => { $("ckmail").textContent = mail || "your email"; $("formside").hidden = true; $("check").classList.add("on"); $("h").hidden = $("p").hidden = true; };
 fetch("/api/public").then(r => r.json()).then(p => {
   if (p.google) { $("google").hidden = false; $("or").hidden = false; }
@@ -158,14 +177,14 @@ fetch("/api/public").then(r => r.json()).then(p => {
 $("f").addEventListener("submit", async e => {
   e.preventDefault(); $("err").classList.remove("on");
   const email = $("email").value.trim(), password = $("password").value;
-  if (!email || !password) return fail("Enter your email and password.");
+  if (!email || !password) return fail(tr("Enter your email and password.", "Введите email и пароль."));
   $("go").disabled = true;
   try {
     const r = await fetch(up ? "/api/auth/signup" : "/api/auth/login", {method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({email, password, name:$("name").value.trim()})});
     const d = await r.json().catch(() => ({}));
     if (d.confirm) { checkEmail(d.email || email); return; }
-    if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : "Something went wrong. Try again.");
+    if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : tr("Something went wrong. Try again.", "Что-то пошло не так. Попробуйте ещё раз."));
     location.href = dest;
   } catch (err) { fail(err.message); $("go").disabled = false; }
 });

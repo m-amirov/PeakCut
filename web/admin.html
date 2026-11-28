@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>PeakCut Admin</title>
+<title>PeakCut — администрирование</title>
 <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -237,17 +237,29 @@ const I = {
  "plus": "<path d=\"M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z\"/>"
 };
 const ic = n => `<svg viewBox="0 0 256 256" aria-hidden="true">${I[n] || ""}</svg>`;
+const UI_LOCALE = (() => { try { return localStorage.getItem("peakcut_ui_locale") === "en" ? "en" : "ru"; } catch { return "ru"; } })();
+document.documentElement.lang = UI_LOCALE;
+const RU = {
+  admin:"Панель администратора", overview:"Обзор", users:"Пользователи", feedback:"Обратная связь", activity:"Активность",
+  overview_sub:"Регистрация, видео и использование ИИ на этом сервере.", users_sub:"Все аккаунты. Откройте аккаунт, чтобы увидеть использование ИИ.", feedback_sub:"Сообщения об ошибках, идеи и другие обращения пользователей.", activity_sub:"Все действия администраторов, сначала новые.",
+  now:"Сейчас", all_time:"За всё время", services:"Сервисы", no_ai_key:"Ключ ИИ не задан", videos_made:"Создаваемые видео", waiting_line:"в очереди", clips_made:"Создаваемые клипы", rendering_waiting:"Рендер или ожидание рендера", live_recordings:"Записи эфиров", person:"автор", people:"авторов", none_now:"Сейчас нет", free_disk:"Свободное место", low_disk:"Мало: новые загрузки остановятся при заполнении диска", room_videos:"Есть место для новых видео", processor:"Загрузка процессора", near_full:"Почти полностью: новые видео в очереди", has_room:"Есть свободные ресурсы", memory_free:"Свободная память", transcription:"Расшифровка", google_signin:"Вход через Google",
+  accounts_total:"Всего аккаунтов", confirmed:"подтвердили email", disabled:"отключено", signed_up_7:"Зарегистрировались за 7 дней", today:"сегодня", in_30:"за 30 дней", active_7:"Активны за 7 дней", admins:"администраторов", videos_processed:"Обработано видео", clips_total:"создано клипов", ai_calls_total:"Всего вызовов ИИ", tokens_used:"Использовано токенов ИИ", own_key:"Учтено по вашему ключу ИИ", recording_now:"Записываются сейчас", live_clipped:"Эфиры с клиппингом", videos_progress:"Видео в работе", running:"в работе", signups:"Регистрации", signups_sub:"Новые аккаунты по дням за последние 30 дней", ai_usage:"Использование ИИ", ai_usage_sub:"Токены по дням за последние 30 дней", ai_calls:"Вызовы ИИ", ai_calls_sub:"По дням за последние 30 дней", ai_purpose:"Для чего используется ИИ", all_users:"Все пользователи, за всё время", no_ai_note:"Ключ ИИ не задан, поэтому клипы создать нельзя. Добавьте свой ключ на странице ИИ в приложении или в файле .env на сервере.",
+  loading_accounts:"Загрузка аккаунтов…", previous:"Назад", page:"Страница", of:"из", next:"Далее", search_accounts:"Поиск по имени или email", all:"Все", admins_filter:"Администраторы", account:"Аккаунт", joined:"Дата регистрации", last_active:"Последняя активность", email_unconfirmed:"Email не подтверждён", no_match:"Аккаунты не найдены", try_filter:"Попробуйте другой поиск или фильтр.", activity_title:"Активность администраторов", activity_note:"Постоянная запись. Её нельзя изменить или удалить отсюда.", when:"Когда", admin_col:"Администратор", action:"Действие", details:"Подробности", nothing:"Пока ничего нет", activity_empty:"Изменения аккаунтов администраторами появятся здесь.",
+  open:"Открытые", done:"Готово", remove_all:"Удалить все", nothing_waiting:"Нет ожидающих сообщений. Все обращения обработаны или удалены.", done_kept:"Отмеченные выполненными обращения хранятся здесь.", messages_here:"Сообщения появятся здесь после отправки пользователями.", new:"Новое", reopen:"Открыть снова", reply_email:"Ответить по email", remove:"Удалить", nothing_here:"Здесь ничего нет", mark_done:"Отметить выполненным", removed:"Удалено", back_app:"Вернуться в приложение", sign_out:"Выйти", refresh:"Обновить", up_to_date:"Всё актуально", loading:"Загрузка…", could_not_load:"Не удалось загрузить", close:"Закрыть", enable:"Включить аккаунт", disable:"Отключить аккаунт", delete_account:"Удалить аккаунт", ai_calls_label:"Вызовы ИИ", ai_tokens:"Токены ИИ", videos:"Видео", clips:"Клипы", signed_devices:"Устройства с активным входом", email_confirmed:"Email подтверждён", yes:"Да", no:"Нет", user_ai_note:"Здесь видно использование ИИ аккаунтом. Его видео, клипы и подключённые аккаунты остаются приватными.", user_ai_for:"Для чего аккаунт использует ИИ", latest_ai:"Последние вызовы ИИ", no_ai_calls:"Вызовов ИИ пока нет.", cancel:"Отмена", delete_message:"Удалить это сообщение?", delete_message_note:"Оно будет удалено навсегда и не подлежит восстановлению.", marked_done:"Отмечено выполненным", reopened:"Снова открыто", message_removed:"Сообщение удалено", disable_question:"Отключить этот аккаунт?", enable_question:"Включить этот аккаунт?", disabled_note:"{email} выйдет со всех устройств и не сможет войти, пока аккаунт не будет включён. Данные сохранятся.", enabled_note:"{email} снова сможет войти.", account_disabled:"Аккаунт отключён", account_enabled:"Аккаунт включён", ready:"готово", by:"от", tokens:"токенов", calls_word:"вызовов", disabled_filter:"Отключены", new_since:"Новые с последнего просмотра", what:"Что", never:"Никогда", total:"Всего", nothing_30:"За последние 30 дней ничего нет", nothing_yet:"Пока ничего нет.", generic_error:"Что-то пошло не так", deleted_account:"Удалённый аккаунт", admin_nav:"Администратор", new_since_title:"Новые с последнего просмотра", action_disable:"Аккаунт отключён", action_enable:"Аккаунт включён", action_delete:"Аккаунт удалён", action_admin:"Назначен администратором", action_user:"Права администратора сняты", action_feedback:"Обращение удалено", this_message:"это сообщение", all:"все", messages:"сообщения", message_shown:"Показанное сообщение будет", messages_shown:"Показанные сообщения будут", removed_forever:"удалены навсегда и не подлежат восстановлению", delete_account_prompt:"Удалить {email} и все данные аккаунта навсегда?", delete_account_note:"Авторы, записи, видео и клипы будут удалены. Отменить это нельзя.", type_email:"Введите email для подтверждения:", account_deleted:"Аккаунт удалён"
+};
+const tr = (key, fallback, values = {}) => Object.entries(values).reduce((s, [k, v]) => s.replaceAll(`{${k}}`, String(v)), UI_LOCALE === "ru" ? (RU[key] || fallback) : fallback);
 const num = v => (Number(v) || 0).toLocaleString();
 const kfmt = v => v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : v >= 1e3 ? (v / 1e3).toFixed(1) + "k" : String(v);
-const when = t => t ? new Date(t * 1000).toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"}) : "Never";
-const day = t => t ? new Date(t * 1000).toLocaleDateString([], {day:"numeric", month:"short", year:"numeric"}) : "Never";
-const ago = t => { if (!t) return "Never"; const s = Date.now() / 1000 - t; return s < 300 ? "Now" : s < 3600 ? Math.floor(s / 60) + " min ago" : s < 86400 ? Math.floor(s / 3600) + " h ago" : s < 30 * 86400 ? Math.floor(s / 86400) + " d ago" : day(t); };
-const ACTION = {disable:"Disabled an account", enable:"Enabled an account", delete:"Deleted an account", "role:admin":"Made an admin", "role:user":"Removed admin", feedback:"Removed feedback"};
+const uiLocales = () => [UI_LOCALE === "ru" ? "ru-RU" : "en-US"];
+const when = t => t ? new Date(t * 1000).toLocaleString(uiLocales(), {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"}) : tr("never", "Never");
+const day = t => t ? new Date(t * 1000).toLocaleDateString(uiLocales(), {day:"numeric", month:"short", year:"numeric"}) : tr("never", "Never");
+const ago = t => { if (!t) return tr("never", "Never"); const s = Date.now() / 1000 - t; return s < 300 ? tr("now", "Now") : s < 3600 ? Math.floor(s / 60) + (UI_LOCALE === "ru" ? " мин назад" : " min ago") : s < 86400 ? Math.floor(s / 3600) + (UI_LOCALE === "ru" ? " ч назад" : " h ago") : s < 30 * 86400 ? Math.floor(s / 86400) + (UI_LOCALE === "ru" ? " дн назад" : " d ago") : day(t); };
+const ACTION = {disable:tr("action_disable", "Disabled an account"), enable:tr("action_enable", "Enabled an account"), delete:tr("action_delete", "Deleted an account"), "role:admin":tr("action_admin", "Made an admin"), "role:user":tr("action_user", "Removed admin"), feedback:tr("action_feedback", "Removed feedback")};
 
 async function api(path, opt) {
   const r = await fetch(path, opt);
   if (r.status === 404 || r.status === 401) { location.replace("/app"); throw new Error("Not available"); }   // no longer an admin, or signed out
-  if (!r.ok) { let d = r.statusText; try { d = (await r.json()).detail || d; } catch {} throw new Error(typeof d === "string" ? d : "Something went wrong"); }
+  if (!r.ok) { let d = r.statusText; try { d = (await r.json()).detail || d; } catch {} throw new Error(typeof d === "string" ? d : tr("generic_error", "Something went wrong")); }
   return r.json();
 }
 const send = (path, body) => api(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body ?? {})});
@@ -257,10 +269,10 @@ function toast(msg, kind = "") {
 }
 
 const S = {tab:"overview", data:null, me:null, q:"", filter:"all", sort:"created_at", fb:null, fbStatus:"open", fbFresh:new Set()};
-const TABS = {overview:["Overview", "home", "Sign-ups, videos and AI use across this PeakCut server."],
-              users:["Users", "users", "Every account. Open one to see how much it uses the AI."],
-              feedback:["Feedback", "chat", "Bug reports, feature ideas and other messages from users."],
-              activity:["Activity", "clock", "Everything admins have done, newest first."]};
+const TABS = {overview:[tr("overview", "Overview"), "home", tr("overview_sub", "Sign-ups, videos and AI use across this PeakCut server.")],
+              users:[tr("users", "Users"), "users", tr("users_sub", "Every account. Open one to see how much it uses the AI.")],
+              feedback:[tr("feedback", "Feedback"), "chat", tr("feedback_sub", "Bug reports, feature ideas and other messages from users.")],
+              activity:[tr("activity", "Activity"), "clock", tr("activity_sub", "Everything admins have done, newest first.")]};
 const pathFor = t => "/admin" + (t === "overview" ? "" : "/" + t);
 const fromPath = () => { const k = location.pathname.replace(/\/$/, "").split("/")[2]; return TABS[k] ? k : "overview"; };
 
@@ -274,7 +286,7 @@ function niceAxis(max, whole) {
   return {top: Math.ceil(max / step - 1e-9) * step, step};
 }
 const axisFmt = (fmt, v) => fmt(v);
-const shortDay = d => new Date(d + "T12:00:00").toLocaleDateString([], {month: "short", day: "numeric"});
+const shortDay = d => new Date(d + "T12:00:00").toLocaleDateString(uiLocales(), {month: "short", day: "numeric"});
 // rows: one per day; a (and b, stacked on top) are the series; names label them in the tip; extra adds lines to the tip
 function bars(rows, a, b, fmt, label, names = [], extra = null) {
   const max = Math.max(0, ...rows.map(r => (r[a] || 0) + (b ? r[b] || 0 : 0)));
@@ -285,7 +297,7 @@ function bars(rows, a, b, fmt, label, names = [], extra = null) {
   const n = rows.length;
   const cols = rows.map((r, i) => {
     const v1 = r[a] || 0, v2 = b ? r[b] || 0 : 0;
-    const tip = `<b>${esc(shortDay(r.day))}</b><span><i></i>${esc(names[0] || "Total")}<em>${esc(fmt(v1))}</em></span>`
+    const tip = `<b>${esc(shortDay(r.day))}</b><span><i></i>${esc(names[0] || tr("total", "Total"))}<em>${esc(fmt(v1))}</em></span>`
       + (b ? `<span><i class="k2"></i>${esc(names[1] || "")}<em>${esc(fmt(v2))}</em></span>` : "") + (extra ? extra(r) : "");
     return `<div class="cc-col${i < 4 ? " l" : i > n - 5 ? " r" : ""}" tabindex="0" aria-label="${esc(shortDay(r.day))}: ${esc(fmt(v1 + v2))}">
       <div class="cc-stack">${v1 ? `<i class="s1" style="height:${(v1 / top * 100).toFixed(2)}%"></i>` : ""}${v2 ? `<i class="s2" style="height:${(v2 / top * 100).toFixed(2)}%"></i>` : ""}</div>
@@ -294,55 +306,55 @@ function bars(rows, a, b, fmt, label, names = [], extra = null) {
   const xl = rows.map((r, i) => (i % 5 === 0 || i === n - 1) && !(i !== n - 1 && n - 1 - i < 3)
     ? `<span style="left:${((i + .5) / n * 100).toFixed(2)}%">${esc(shortDay(r.day))}</span>` : "").join("");
   return `<div class="cc" role="img" aria-label="${esc(label)}"><div class="cc-y">${yl}</div>
-    <div class="cc-plot">${grid}<div class="cc-cols">${cols}</div>${max ? "" : `<div class="cc-none">Nothing in the last 30 days</div>`}</div>
+    <div class="cc-plot">${grid}<div class="cc-cols">${cols}</div>${max ? "" : `<div class="cc-none">${tr("nothing_30", "Nothing in the last 30 days")}</div>`}</div>
     <div class="cc-x">${xl}</div></div>`;
 }
 function hbars(rows, fmt) {
   const total = rows.reduce((s, r) => s + r[1], 0) || 1;
   return rows.length ? `<div class="hbar">${rows.map(r => `<div class="hbar-row"><div class="top"><span>${esc(r[0])}</span><span>${esc(fmt(r))}</span></div>
-    <div class="track"><i style="width:${Math.max(2, r[1] / total * 100)}%"></i></div></div>`).join("")}</div>` : `<p class="help">Nothing yet.</p>`;
+    <div class="track"><i style="width:${Math.max(2, r[1] / total * 100)}%"></i></div></div>`).join("")}</div>` : `<p class="help">${tr("nothing_yet", "Nothing yet.")}</p>`;
 }
 const tile = (icon, big, label, small = "") => `<div class="tile"><i>${ic(icon)}</i><b>${esc(big)}</b><span>${esc(label)}</span>${small ? `<small>${esc(small)}</small>` : ""}</div>`;
 
 /* ---------- pages */
 function drawOverview(a) {
   const t = a.totals, sv = a.server, ok = (v, l) => `<span class="pill ${v ? "ok" : "bad"}">${esc(l)}</span>`;
-  const ai = sv.ai_key ? `AI: ${[sv.ai_provider, sv.ai_model].filter(Boolean).join(", ") || "ready"}` : "No AI key";
+  const ai = sv.ai_key ? `AI: ${[sv.ai_provider, sv.ai_model].filter(Boolean).join(", ") || tr("ready", "ready")}` : tr("no_ai_key", "No AI key");
   const n = a.now || {}, ld = sv.load || {};
   const live = (big, label, small, hot) => `<div class="tile now${hot ? " hot" : ""}">${hot ? `<span class="nowdot"></span>` : ""}<b>${esc(big)}</b><span>${esc(label)}</span>${small ? `<small>${esc(small)}</small>` : ""}</div>`;
-  return `<h3 class="sect"><span class="nowdot"></span>Right now</h3>
+  return `<h3 class="sect"><span class="nowdot"></span>${tr("now", "Right now")}</h3>
     <div class="tiles now-tiles">
-      ${live(num(n.videos_running), "Videos being made", `${num(n.videos_waiting)} waiting in line`, n.videos_running > 0)}
-      ${live(num(n.clips_making), "Clips being made", "Rendering or waiting to render", n.clips_making > 0)}
-      ${live(num(n.live), "Live recordings", n.live ? `by ${num(n.live_people)} ${n.live_people === 1 ? "person" : "people"}` : "None right now", n.live > 0)}
+      ${live(num(n.videos_running), tr("videos_made", "Videos being made"), `${num(n.videos_waiting)} ${tr("waiting_line", "waiting in line")}`, n.videos_running > 0)}
+      ${live(num(n.clips_making), tr("clips_made", "Clips being made"), tr("rendering_waiting", "Rendering or waiting to render"), n.clips_making > 0)}
+      ${live(num(n.live), tr("live_recordings", "Live recordings"), n.live ? `${tr("by", "by")} ${num(n.live_people)} ${n.live_people === 1 ? tr("person", "person") : tr("people", "people")}` : tr("none_now", "None right now"), n.live > 0)}
     </div>
     <div class="tiles now-tiles">
-      ${live(`${sv.free_gb} GB`, "Free disk space", sv.free_gb < 15 ? "Low: new uploads stop when the drive is almost full" : "Room for new videos")}
-      ${live(`${ld.cpu ?? "–"}%`, "Processor in use", ld.busy ? "Near full: new videos are queueing" : "Has room")}
-      ${live(`${ld.ram_free_gb ?? "–"} GB`, "Memory free", "")}
-      <div class="tile now"><b style="font-size:15px;letter-spacing:0">Services</b><div class="row" style="margin-top:8px">${ok(sv.ai_key, ai)}${ok(sv.speech_model, "Transcription")}${Object.entries(sv.speech_more || {}).map(([k, y]) => ok(y, k + " speech")).join("")}${ok(sv.google, "Google sign-in")}</div></div>
+      ${live(`${sv.free_gb} GB`, tr("free_disk", "Free disk space"), sv.free_gb < 15 ? tr("low_disk", "Low: new uploads stop when the drive is almost full") : tr("room_videos", "Room for new videos"))}
+      ${live(`${ld.cpu ?? "–"}%`, tr("processor", "Processor in use"), ld.busy ? tr("near_full", "Near full: new videos are queueing") : tr("has_room", "Has room"))}
+      ${live(`${ld.ram_free_gb ?? "–"} GB`, tr("memory_free", "Memory free"), "")}
+      <div class="tile now"><b style="font-size:15px;letter-spacing:0">${tr("services", "Services")}</b><div class="row" style="margin-top:8px">${ok(sv.ai_key, ai)}${ok(sv.speech_model, tr("transcription", "Transcription"))}${Object.entries(sv.speech_more || {}).map(([k, y]) => ok(y, k + " speech")).join("")}${ok(sv.google, tr("google_signin", "Google sign-in"))}</div></div>
     </div>
-    <h3 class="sect">All time</h3>
+    <h3 class="sect">${tr("all_time", "All time")}</h3>
     <div class="tiles">
-      ${tile("users", num(t.users), "Accounts in total", `${num(t.verified)} confirmed their email, ${num(t.disabled)} disabled`)}
-      ${tile("plus", num(t.signups_7d), "Signed up, last 7 days", `${num(t.signups_today)} today, ${num(t.signups_30d)} in 30 days`)}
-      ${tile("clock", num(t.active_7d), "Active, last 7 days", `${num(t.admins)} admin${t.admins === 1 ? "" : "s"}`)}
-      ${tile("video", num(t.videos), "Videos processed", `${num(t.clips)} clips made`)}
+      ${tile("users", num(t.users), tr("accounts_total", "Accounts in total"), `${num(t.verified)} ${tr("confirmed", "confirmed their email")}, ${num(t.disabled)} ${tr("disabled", "disabled")}`)}
+      ${tile("plus", num(t.signups_7d), tr("signed_up_7", "Signed up, last 7 days"), `${num(t.signups_today)} ${tr("today", "today")}, ${num(t.signups_30d)} ${tr("in_30", "in 30 days")}`)}
+      ${tile("clock", num(t.active_7d), tr("active_7", "Active, last 7 days"), `${num(t.admins)} ${tr("admins", "admins")}`)}
+      ${tile("video", num(t.videos), tr("videos_processed", "Videos processed"), `${num(t.clips)} ${tr("clips_total", "clips made")}`)}
     </div><div class="tiles">
-      ${tile("bolt", num(t.ai_calls), "AI calls in total", `${num(t.ai_calls_today)} today`)}
-      ${tile("chart", kfmt(t.tokens), "AI tokens used", "Counted on your own AI key")}
-      ${tile("video", num(t.recording), "Recording right now", "Live streams being clipped")}
-      ${tile("clock", num(t.working), "Videos in progress", `${num(sv.running)} running, ${num(sv.waiting)} waiting`)}
+      ${tile("bolt", num(t.ai_calls), tr("ai_calls_total", "AI calls in total"), `${num(t.ai_calls_today)} ${tr("today", "today")}`)}
+      ${tile("chart", kfmt(t.tokens), tr("tokens_used", "AI tokens used"), tr("own_key", "Counted on your own AI key"))}
+      ${tile("video", num(t.recording), tr("recording_now", "Recording right now"), tr("live_clipped", "Live streams being clipped"))}
+      ${tile("clock", num(t.working), tr("videos_progress", "Videos in progress"), `${num(sv.running)} ${tr("running", "running")}, ${num(sv.waiting)} ${tr("waiting_line", "waiting")}`)}
     </div>
     <div class="split">
-      <div class="card"><div class="card-head"><div><h2>Sign-ups</h2><p class="sub">New accounts per day, last 30 days</p></div></div>${bars(a.daily, "signups", null, v => String(Math.round(v)), "New accounts per day", ["Sign-ups"])}</div>
-      <div class="card"><div class="card-head"><div><h2>AI usage</h2><p class="sub">Tokens used per day, last 30 days</p></div></div>${bars(a.daily, "tokens", null, v => kfmt(Math.round(v)), "AI tokens used per day", ["Tokens"])}</div>
+      <div class="card"><div class="card-head"><div><h2>${tr("signups", "Sign-ups")}</h2><p class="sub">${tr("signups_sub", "New accounts per day, last 30 days")}</p></div></div>${bars(a.daily, "signups", null, v => String(Math.round(v)), tr("signups_sub", "New accounts per day"), [tr("signups", "Sign-ups")])}</div>
+      <div class="card"><div class="card-head"><div><h2>${tr("ai_usage", "AI usage")}</h2><p class="sub">${tr("ai_usage_sub", "Tokens used per day, last 30 days")}</p></div></div>${bars(a.daily, "tokens", null, v => kfmt(Math.round(v)), tr("ai_usage_sub", "AI tokens used per day"), [tr("tokens", "Tokens")])}</div>
     </div>
     <div class="split">
-      <div class="card"><div class="card-head"><div><h2>AI calls</h2><p class="sub">Per day, last 30 days</p></div></div>${bars(a.daily, "calls", null, v => String(Math.round(v)), "AI calls per day", ["AI calls"])}</div>
-      <div class="card"><div class="card-head"><div><h2>What the AI is used for</h2><p class="sub">All users, all time</p></div></div>${hbars(a.by_purpose, r => `${num(r[1])} call${r[1] === 1 ? "" : "s"} · ${kfmt(r[2])} tokens`)}</div>
+      <div class="card"><div class="card-head"><div><h2>${tr("ai_calls", "AI calls")}</h2><p class="sub">${tr("ai_calls_sub", "Per day, last 30 days")}</p></div></div>${bars(a.daily, "calls", null, v => String(Math.round(v)), tr("ai_calls_sub", "AI calls per day"), [tr("ai_calls", "AI calls")])}</div>
+      <div class="card"><div class="card-head"><div><h2>${tr("ai_purpose", "What the AI is used for")}</h2><p class="sub">${tr("all_users", "All users, all time")}</p></div></div>${hbars(a.by_purpose, r => `${num(r[1])} ${tr("calls_word", "calls")} · ${kfmt(r[2])} ${tr("tokens", "tokens")}`)}</div>
     </div>
-      ${sv.ai_key ? "" : `<p class="note">No AI key is set, so no clips can be made. Add your own key in the app on the AI page (the AI card at the bottom of the sidebar), or in the .env file on the server (see .env.example).</p>`}`;
+      ${sv.ai_key ? "" : `<p class="note">${tr("no_ai_note", "No AI key is set, so no clips can be made. Add your own key in the app on the AI page (the AI card at the bottom of the sidebar), or in the .env file on the server (see .env.example).")}</p>`}`;
 }
 
 /* The accounts are searched, filtered and sorted on the server, across every account, 50 to a page. */
@@ -358,52 +370,52 @@ const shownUser = id => (S.ul?.users || []).find(x => x.id === id);
 function drawUsers(a) {
   const seg = (k, l) => `<button class="${S.filter === k ? "on" : ""}" data-act="filter" data-k="${k}">${l}</button>`;
   const th = (k, l) => `<th class="num"><button data-act="sort" data-k="${k}" style="all:unset;cursor:pointer;color:${S.sort === k ? "var(--brand-deep)" : "inherit"}">${l}</button></th>`;
-  if (!S.ul) { if (!S.ulLoading) { S.ulLoading = true; loadUsers().finally(() => S.ulLoading = false); } return `<div class="empty"><b>Loading accounts…</b></div>`; }
+  if (!S.ul) { if (!S.ulLoading) { S.ulLoading = true; loadUsers().finally(() => S.ulLoading = false); } return `<div class="empty"><b>${tr("loading_accounts", "Loading accounts…")}</b></div>`; }
   const L = S.ul, rows = L.users;
-  const pager = L.pages > 1 ? `<div class="pager"><button class="btn sm" data-act="upage" data-p="${L.page - 1}" ${L.page <= 1 ? "disabled" : ""}>Previous</button>
-      <span class="sub">Page ${num(L.page)} of ${num(L.pages)}</span><button class="btn sm" data-act="upage" data-p="${L.page + 1}" ${L.page >= L.pages ? "disabled" : ""}>Next</button></div>` : "";
-  return `<div class="toolbar"><input type="search" id="q" placeholder="Search by name or email" value="${esc(S.q)}" aria-label="Search accounts">
-      <div class="seg">${seg("all", "All")}${seg("disabled", "Disabled")}${seg("admins", "Admins")}</div>
+  const pager = L.pages > 1 ? `<div class="pager"><button class="btn sm" data-act="upage" data-p="${L.page - 1}" ${L.page <= 1 ? "disabled" : ""}>${tr("previous", "Previous")}</button>
+      <span class="sub">${tr("page", "Page")} ${num(L.page)} ${tr("of", "of")} ${num(L.pages)}</span><button class="btn sm" data-act="upage" data-p="${L.page + 1}" ${L.page >= L.pages ? "disabled" : ""}>${tr("next", "Next")}</button></div>` : "";
+  return `<div class="toolbar"><input type="search" id="q" placeholder="${tr("search_accounts", "Search by name or email")}" value="${esc(S.q)}" aria-label="${tr("search_accounts", "Search accounts")} ">
+      <div class="seg">${seg("all", tr("all", "All"))}${seg("disabled", tr("disabled_filter", "Disabled"))}${seg("admins", tr("admins_filter", "Admins") )}</div>
       <span class="sub">${num(L.total)} of ${num(L.all)}</span></div>
-    <div class="card"><div class="scroll"><table><tr><th>Account</th><th><button data-act="sort" data-k="created_at" style="all:unset;cursor:pointer;color:${S.sort === "created_at" ? "var(--brand-deep)" : "inherit"}">Joined</button></th>
-      <th><button data-act="sort" data-k="last_seen" style="all:unset;cursor:pointer;color:${S.sort === "last_seen" ? "var(--brand-deep)" : "inherit"}">Last active</button></th>
-      ${th("ai_calls", "AI calls")}${th("tokens", "AI tokens")}${th("videos", "Videos")}${th("clips", "Clips")}</tr>
+    <div class="card"><div class="scroll"><table><tr><th>${tr("account", "Account")}</th><th><button data-act="sort" data-k="created_at" style="all:unset;cursor:pointer;color:${S.sort === "created_at" ? "var(--brand-deep)" : "inherit"}">${tr("joined", "Joined")}</button></th>
+      <th><button data-act="sort" data-k="last_seen" style="all:unset;cursor:pointer;color:${S.sort === "last_seen" ? "var(--brand-deep)" : "inherit"}">${tr("last_active", "Last active")}</button></th>
+      ${th("ai_calls", tr("ai_calls_label", "AI calls"))}${th("tokens", tr("ai_tokens", "AI tokens"))}${th("videos", tr("videos", "Videos"))}${th("clips", tr("clips", "Clips"))}</tr>
       ${rows.map(u => `<tr class="u" data-act="user" data-id="${esc(u.id)}"><td><b>${esc(u.name || u.email.split("@")[0])}</b>
-          ${u.role === "admin" ? ` <span class="pill brand">Admin</span>` : ""}${u.disabled ? ` <span class="pill bad">Disabled</span>` : ""}${u.verified ? "" : ` <span class="pill warn">Email not confirmed</span>`}
+          ${u.role === "admin" ? ` <span class="pill brand">${tr("admin", "Admin")}</span>` : ""}${u.disabled ? ` <span class="pill bad">${tr("disabled_filter", "Disabled")}</span>` : ""}${u.verified ? "" : ` <span class="pill warn">${tr("email_unconfirmed", "Email not confirmed")}</span>`}
           <div class="em">${esc(u.email)}</div></td>
         <td class="sub">${esc(day(u.created_at))}</td><td class="sub">${esc(ago(u.last_seen))}</td>
         <td class="num">${num(u.ai_calls)}</td><td class="num">${esc(kfmt(u.tokens || 0))}</td>
         <td class="num">${num(u.videos)}</td><td class="num">${num(u.clips)}</td></tr>`).join("")
-        || `<tr><td colspan="7"><div class="empty"><b>No accounts match</b>Try another search or filter.</div></td></tr>`}</table></div>${pager}</div>`;
+        || `<tr><td colspan="7"><div class="empty"><b>${tr("no_match", "No accounts match")}</b>${tr("try_filter", "Try another search or filter.")}</div></td></tr>`}</table></div>${pager}</div>`;
 }
 
 function drawActivity(a) {
-  return `<div class="card"><div class="card-head"><div><h2>Admin activity</h2><p class="sub">A permanent record. Entries cannot be edited or removed from here.</p></div></div>
-    ${a.log.length ? `<div class="scroll"><table><tr><th>When</th><th>Admin</th><th>Action</th><th>Account</th><th>Details</th></tr>
+  return `<div class="card"><div class="card-head"><div><h2>${tr("activity_title", "Admin activity")}</h2><p class="sub">${tr("activity_note", "A permanent record. Entries cannot be edited or removed from here.")}</p></div></div>
+    ${a.log.length ? `<div class="scroll"><table><tr><th>${tr("when", "When")}</th><th>${tr("admin_col", "Admin")}</th><th>${tr("action", "Action")}</th><th>${tr("account", "Account")}</th><th>${tr("details", "Details")}</th></tr>
       ${a.log.map(l => `<tr><td class="sub">${esc(when(l.t))}</td><td>${esc(l.admin || "Removed admin")}</td><td>${esc(ACTION[l.action] || l.action)}</td>
         <td>${esc(l.target || "")}</td><td class="sub">${esc(l.detail)}</td></tr>`).join("")}</table></div>`
-      : `<div class="empty"><b>Nothing yet</b>Account changes made by admins are recorded here.</div>`}</div>`;
+      : `<div class="empty"><b>${tr("nothing", "Nothing yet")}</b>${tr("activity_empty", "Account changes made by admins are recorded here.")}</div>`}</div>`;
 }
 
 const FBK = {bug: ["Bug", "bad"], idea: ["Idea", "warn"], other: ["Message", ""], rating: ["Rating", "brand"]};
 const fbOpen = f => f.counts.new + f.counts.seen;
 function drawFeedback() {
   const f = S.fb;
-  if (!f) return `<div class="empty"><b>Loading…</b></div>`;
+  if (!f) return `<div class="empty"><b>${tr("loading", "Loading…")}</b></div>`;
   const seg = (k, l, n) => `<button class="${S.fbStatus === k ? "on" : ""}" data-act="fbfilter" data-k="${k}">${l}${n ? ` · ${num(n)}` : ""}</button>`;
   const isNew = x => x.status === "new" || S.fbFresh.has(x.id);
-  const empty = {open: "Nothing is waiting. Every message has been dealt with or removed.", done: "Messages you mark as done are kept here.", "": "Messages appear here as users send them."}[S.fbStatus];
-  return `<div class="toolbar"><div class="seg">${seg("open", "Open", fbOpen(f))}${seg("done", "Done", f.counts.done)}${seg("", "All")}</div>
-      ${f.items.length ? `<button class="btn sm danger end" data-act="fbclear">Remove all ${num(f.items.length)}</button>` : ""}</div>
+  const empty = {open: tr("nothing_waiting", "Nothing is waiting. Every message has been dealt with or removed."), done: tr("done_kept", "Messages you mark as done are kept here."), "": tr("messages_here", "Messages appear here as users send them.")}[S.fbStatus];
+  return `<div class="toolbar"><div class="seg">${seg("open", tr("open", "Open"), fbOpen(f))}${seg("done", tr("done", "Done"), f.counts.done)}${seg("", tr("all", "All"))}</div>
+      ${f.items.length ? `<button class="btn sm danger end" data-act="fbclear">${tr("remove_all", "Remove all")} ${num(f.items.length)}</button>` : ""}</div>
     ${f.items.length ? f.items.map(x => `<div class="card fbitem"><div class="fbtop">
         <span class="pill ${FBK[x.kind]?.[1] || ""}">${esc(FBK[x.kind]?.[0] || x.kind)}</span>
-        <b>${esc(x.name || x.email || "Deleted account")}</b><span class="sub">${esc(x.email)} · ${esc(when(x.t))}${x.page ? " · " + esc(x.page) : ""}</span>
-        ${isNew(x) ? `<span class="pill warn" style="margin-left:auto">New</span>` : x.status === "done" ? `<span class="pill ok" style="margin-left:auto">Done</span>` : ""}</div>
+        <b>${esc(x.name || x.email || tr("deleted_account", "Deleted account"))}</b><span class="sub">${esc(x.email)} · ${esc(when(x.t))}${x.page ? " · " + esc(x.page) : ""}</span>
+        ${isNew(x) ? `<span class="pill warn" style="margin-left:auto">${tr("new", "New")}</span>` : x.status === "done" ? `<span class="pill ok" style="margin-left:auto">${tr("done", "Done")}</span>` : ""}</div>
       <p class="fbmsg">${esc(x.message)}</p>${x.context ? `<p class="fbctx">${esc(x.context)}</p>` : ""}
-      <div class="row fbacts">${x.status !== "done" ? `<button class="btn sm" data-act="fbset" data-id="${x.id}" data-s="done">${ic("check")}Done</button>` : `<button class="btn sm" data-act="fbset" data-id="${x.id}" data-s="seen">Reopen</button>`}
-        ${x.email ? `<a class="btn sm" href="mailto:${esc(x.email)}?subject=${encodeURIComponent("About your PeakCut feedback")}">Reply by email</a>` : ""}
-        <button class="btn sm danger end" data-act="fbdrop" data-id="${x.id}">Remove</button></div></div>`).join("")
-      : `<div class="card"><div class="empty"><b>Nothing here</b>${empty}</div></div>`}`;
+      <div class="row fbacts">${x.status !== "done" ? `<button class="btn sm" data-act="fbset" data-id="${x.id}" data-s="done">${ic("check")}${tr("mark_done", "Done")}</button>` : `<button class="btn sm" data-act="fbset" data-id="${x.id}" data-s="seen">${tr("reopen", "Reopen")}</button>`}
+        ${x.email ? `<a class="btn sm" href="mailto:${esc(x.email)}?subject=${encodeURIComponent("About your PeakCut feedback")}">${tr("reply_email", "Reply by email")}</a>` : ""}
+        <button class="btn sm danger end" data-act="fbdrop" data-id="${x.id}">${tr("remove", "Remove")}</button></div></div>`).join("")
+      : `<div class="card"><div class="empty"><b>${tr("nothing_here", "Nothing here")}</b>${empty}</div></div>`}`;
 }
 async function loadFeedback() {
   try { S.fb = await api("/api/admin/feedback?status=" + S.fbStatus); } catch (e) { return toast(e.message, "bad"); }
@@ -416,13 +428,14 @@ async function loadFeedback() {
 }
 function draw() {
   const a = S.data, [title, , sub] = TABS[S.tab];
-  $("#nav").innerHTML = `<h4>Admin</h4>` + Object.entries(TABS).map(([k, [l, i]]) =>
-    `<a class="nav-item ${S.tab === k ? "on" : ""}" href="${pathFor(k)}" data-act="tab" data-k="${k}">${ic(i)}<span class="label">${l}</span>${k === "users" && a ? `<span class="count">${num(a.totals.users)}</span>` : ""}${k === "feedback" && S.fb?.counts.new ? `<span class="count" title="New since you last looked">${num(S.fb.counts.new)}</span>` : ""}</a>`).join("");
+  $("#nav").setAttribute("aria-label", tr("admin_nav", "Admin"));
+  $("#nav").innerHTML = `<h4>${tr("admin", "Admin")}</h4>` + Object.entries(TABS).map(([k, [l, i]]) =>
+    `<a class="nav-item ${S.tab === k ? "on" : ""}" href="${pathFor(k)}" data-act="tab" data-k="${k}">${ic(i)}<span class="label">${l}</span>${k === "users" && a ? `<span class="count">${num(a.totals.users)}</span>` : ""}${k === "feedback" && S.fb?.counts.new ? `<span class="count" title="${tr("new_since_title", "New since you last looked")}">${num(S.fb.counts.new)}</span>` : ""}</a>`).join("");
   $("#foot").innerHTML = (S.me ? `<div class="who"><b>${esc(S.me.name)}</b>${esc(S.me.email)}</div>` : "") +
-    `<a class="nav-item" href="/app">${ic("arrowr")}<span class="label">Back to the app</span></a>
-     <button class="nav-item" data-act="logout">${ic("signout")}<span class="label">Sign out</span></button>`;
+    `<a class="nav-item" href="/app">${ic("arrowr")}<span class="label">${tr("back_app", "Back to the app")}</span></a>
+     <button class="nav-item" data-act="logout">${ic("signout")}<span class="label">${tr("sign_out", "Sign out")}</span></button>`;
   $("#title").textContent = title; $("#subtitle").textContent = sub;
-  $("#actions").innerHTML = `<button class="btn sm" data-act="refresh">Refresh</button>`;
+  $("#actions").innerHTML = `<button class="btn sm" data-act="refresh">${tr("refresh", "Refresh")}</button>`;
   if (S.tab === "feedback") { if (!S.fb && !S.fbLoading) { S.fbLoading = true; loadFeedback().finally(() => S.fbLoading = false); } $("#view").innerHTML = drawFeedback(); return; }
   if (!a) return;
   const keep = document.activeElement?.id === "q" ? $("#q").selectionStart : null;
@@ -431,7 +444,7 @@ function draw() {
 }
 async function load() {
   try { S.data = await api("/api/admin/overview"); draw(); }
-  catch (e) { if (e.message !== "Not available") $("#view").innerHTML = `<div class="empty"><b>Couldn't load</b>${esc(e.message)}</div>`; }
+  catch (e) { if (e.message !== "Not available") $("#view").innerHTML = `<div class="empty"><b>${tr("could_not_load", "Couldn't load")}</b>${esc(e.message)}</div>`; }
 }
 function go(tab, push = true) {
   if (tab !== S.tab) S.fbFresh.clear();
@@ -445,30 +458,30 @@ document.addEventListener("visibilitychange", () => { if (S.tab === "feedback" &
 /* ---------- account dialogs */
 async function userDialog(id) {
   const d = $("#dlg");
-  d.innerHTML = `<div class="dlg wide"><p class="help">Loading…</p></div>`; d.showModal();
+  d.innerHTML = `<div class="dlg wide"><p class="help">${tr("loading", "Loading…")}</p></div>`; d.showModal();
   let u; try { u = await api(`/api/admin/users/${encodeURIComponent(id)}`); } catch (e) { d.close(); return toast(e.message, "bad"); }
   const row = shownUser(id) || {};
   d.innerHTML = `<div class="dlg wide"><div class="card-head" style="margin:0"><div><h2>${esc(u.name || u.email.split("@")[0])}
-      ${u.role === "admin" ? ` <span class="pill brand">Admin</span>` : ""}${u.disabled ? ` <span class="pill bad">Disabled</span>` : ""}</h2><p class="sub">${esc(u.email)}</p></div>
+      ${u.role === "admin" ? ` <span class="pill brand">${tr("admin", "Admin")}</span>` : ""}${u.disabled ? ` <span class="pill bad">${tr("disabled_filter", "Disabled")}</span>` : ""}</h2><p class="sub">${esc(u.email)}</p></div>
       <div class="row">
-        ${u.role === "admin" ? "" : `<button class="btn sm ${u.disabled ? "" : "danger"}" data-act="disable" data-id="${esc(u.id)}" data-off="${u.disabled ? "0" : "1"}">${u.disabled ? "Enable account" : "Disable account"}</button>`}
-        ${u.role === "admin" ? "" : `<button class="btn sm danger" data-act="deluser" data-id="${esc(u.id)}">Delete account</button>`}
-        <button class="btn sm" data-act="closedlg">Close</button></div></div>
-    <div class="facts"><div><b>${num(row.ai_calls)}</b><span>AI calls</span></div><div><b>${esc(kfmt(row.tokens || 0))}</b><span>AI tokens</span></div>
-      <div><b>${num(row.videos)}</b><span>Videos</span></div><div><b>${num(row.clips)}</b><span>Clips</span></div>
-      <div><b>${esc(day(u.created_at))}</b><span>Joined</span></div><div><b>${esc(ago(u.last_seen))}</b><span>Last active</span></div>
-      <div><b>${num(u.signed_in_devices)}</b><span>Signed-in devices</span></div><div><b>${row.verified === false ? "No" : "Yes"}</b><span>Email confirmed</span></div></div>
-    <p class="note">You can see how much this account uses the AI. Their videos, clips and connected accounts stay private to them.</p>
-    <h3>What they use the AI for</h3>${hbars(u.by_purpose, r => `${kfmt(r[1])} tokens · ${num(r[2])} call${r[2] === 1 ? "" : "s"}`)}
-    <h3>Latest AI calls</h3>
-    ${u.recent.length ? `<div class="scroll"><table><tr><th>When</th><th>What</th><th class="num">Tokens</th></tr>
-      ${u.recent.map(r => `<tr><td class="sub">${esc(when(r.t))}</td><td>${esc(r.purpose)}</td><td class="num">${num(r.tokens)}</td></tr>`).join("")}</table></div>` : `<p class="help">No AI calls yet.</p>`}</div>`;
+        ${u.role === "admin" ? "" : `<button class="btn sm ${u.disabled ? "" : "danger"}" data-act="disable" data-id="${esc(u.id)}" data-off="${u.disabled ? "0" : "1"}">${u.disabled ? tr("enable", "Enable account") : tr("disable", "Disable account")}</button>`}
+        ${u.role === "admin" ? "" : `<button class="btn sm danger" data-act="deluser" data-id="${esc(u.id)}">${tr("delete_account", "Delete account")}</button>`}
+        <button class="btn sm" data-act="closedlg">${tr("close", "Close")}</button></div></div>
+    <div class="facts"><div><b>${num(row.ai_calls)}</b><span>${tr("ai_calls_label", "AI calls")}</span></div><div><b>${esc(kfmt(row.tokens || 0))}</b><span>${tr("ai_tokens", "AI tokens")}</span></div>
+      <div><b>${num(row.videos)}</b><span>${tr("videos", "Videos")}</span></div><div><b>${num(row.clips)}</b><span>${tr("clips", "Clips")}</span></div>
+      <div><b>${esc(day(u.created_at))}</b><span>${tr("joined", "Joined")}</span></div><div><b>${esc(ago(u.last_seen))}</b><span>${tr("last_active", "Last active")}</span></div>
+      <div><b>${num(u.signed_in_devices)}</b><span>${tr("signed_devices", "Signed-in devices")}</span></div><div><b>${row.verified === false ? tr("no", "No") : tr("yes", "Yes")}</b><span>${tr("email_confirmed", "Email confirmed")}</span></div></div>
+    <p class="note">${tr("user_ai_note", "You can see how much this account uses the AI. Their videos, clips and connected accounts stay private to them.")}</p>
+    <h3>${tr("user_ai_for", "What they use the AI for")}</h3>${hbars(u.by_purpose, r => `${kfmt(r[1])} ${tr("tokens", "tokens")} · ${num(r[2])} ${tr("calls_word", "calls")}`)}
+    <h3>${tr("latest_ai", "Latest AI calls")}</h3>
+    ${u.recent.length ? `<div class="scroll"><table><tr><th>${tr("when", "When")}</th><th>${tr("what", "What")}</th><th class="num">${tr("tokens", "Tokens")}</th></tr>
+      ${u.recent.map(r => `<tr><td class="sub">${esc(when(r.t))}</td><td>${esc(r.purpose)}</td><td class="num">${num(r.tokens)}</td></tr>`).join("")}</table></div>` : `<p class="help">${tr("no_ai_calls", "No AI calls yet.")}</p>`}</div>`;
 }
 function confirmDialog(title, text, okLabel, danger) {
   return new Promise(res => {
     const d = $("#dlg");
     d.innerHTML = `<form method="dialog" class="dlg"><h2>${esc(title)}</h2><p class="help">${esc(text)}</p>
-      <div class="dlg-foot"><button class="btn" value="no">Cancel</button><button class="btn ${danger ? "danger" : "primary"}" value="yes" autofocus>${esc(okLabel)}</button></div></form>`;
+      <div class="dlg-foot"><button class="btn" value="no">${tr("cancel", "Cancel")}</button><button class="btn ${danger ? "danger" : "primary"}" value="yes" autofocus>${esc(okLabel)}</button></div></form>`;
     d.onclose = () => { d.onclose = null; res(d.returnValue === "yes"); }; d.returnValue = "no"; if (!d.open) d.showModal();
   });
 }
@@ -480,19 +493,19 @@ document.addEventListener("click", async e => {
   const a = b.dataset.act, d = b.dataset;
   try {
     if (a === "tab") { e.preventDefault(); return go(d.k); }
-    if (a === "refresh") { await load(); await loadFeedback(); if (S.tab === "users") await loadUsers(); return toast("Up to date", "ok"); }
+    if (a === "refresh") { await load(); await loadFeedback(); if (S.tab === "users") await loadUsers(); return toast(tr("up_to_date", "Up to date"), "ok"); }
     if (a === "upage") { S.upage = Number(d.p); await loadUsers(); return $("#main").scrollTo(0, 0); }
     if (a === "fbfilter") { S.fbStatus = d.k; return loadFeedback(); }
-    if (a === "fbset") { await send(`/api/admin/feedback/${d.id}`, {status: d.s}); toast(d.s === "done" ? "Marked done" : "Reopened", "ok"); return loadFeedback(); }
+    if (a === "fbset") { await send(`/api/admin/feedback/${d.id}`, {status: d.s}); toast(d.s === "done" ? tr("marked_done", "Marked done") : tr("reopened", "Reopened"), "ok"); return loadFeedback(); }
     if (a === "fbdrop") {
-      if (!await confirmDialog("Remove this message?", "It is removed for good and can't be brought back.", "Remove", true)) return;
-      await send("/api/admin/feedback/remove", {ids: [Number(d.id)]}); toast("Message removed", "ok"); return loadFeedback();
+      if (!await confirmDialog(tr("delete_message", "Remove this message?"), tr("delete_message_note", "It is removed for good and can't be brought back."), tr("remove", "Remove"), true)) return;
+      await send("/api/admin/feedback/remove", {ids: [Number(d.id)]}); toast(tr("message_removed", "Message removed"), "ok"); return loadFeedback();
     }
     if (a === "fbclear") {
       const ids = S.fb.items.map(x => x.id);
-      if (!await confirmDialog(`Remove ${ids.length === 1 ? "this message" : `all ${num(ids.length)} messages`}?`,
-        `${ids.length === 1 ? "The message shown here is" : "The messages shown here are"} removed for good and can't be brought back.`, "Remove all", true)) return;
-      const r = await send("/api/admin/feedback/remove", {ids}); toast(`${num(r.removed)} removed`, "ok"); return loadFeedback();
+      if (!await confirmDialog(`${tr("remove", "Remove")} ${ids.length === 1 ? tr("this_message", "this message") : `${tr("all", "all")} ${num(ids.length)} ${tr("messages", "messages")}`}?`,
+        `${ids.length === 1 ? tr("message_shown", "The message shown here is") : tr("messages_shown", "The messages shown here are")} ${tr("removed_forever", "removed for good and can't be brought back.")}`, tr("remove_all", "Remove all"), true)) return;
+      const r = await send("/api/admin/feedback/remove", {ids}); toast(`${num(r.removed)} ${tr("removed", "removed")}`, "ok"); return loadFeedback();
     }
     if (a === "filter") { S.filter = d.k; S.upage = 1; return loadUsers(); }
     if (a === "sort") { e.stopPropagation(); S.sort = d.k; S.upage = 1; return loadUsers(); }
@@ -501,19 +514,19 @@ document.addEventListener("click", async e => {
     if (a === "disable") {
       const off = d.off === "1", u = shownUser(d.id); if (!u) return;
       $("#dlg").close();
-      if (!await confirmDialog(off ? "Disable this account?" : "Enable this account?",
-        off ? `${u.email} is signed out everywhere and cannot sign in until you enable the account again. Their data is kept.` : `${u.email} will be able to sign in again.`,
-        off ? "Disable account" : "Enable account", off)) return;
+      if (!await confirmDialog(off ? tr("disable_question", "Disable this account?") : tr("enable_question", "Enable this account?"),
+        off ? tr("disabled_note", "{email} is signed out everywhere and cannot sign in until you enable the account again. Their data is kept.", {email:u.email}) : tr("enabled_note", "{email} will be able to sign in again.", {email:u.email}),
+        off ? tr("disable", "Disable account") : tr("enable", "Enable account"), off)) return;
       await send(`/api/admin/users/${encodeURIComponent(d.id)}/disabled`, {disabled:off});
-      toast(off ? "Account disabled" : "Account enabled", "ok"); await load(); return loadUsers();
+      toast(off ? tr("account_disabled", "Account disabled") : tr("account_enabled", "Account enabled"), "ok"); await load(); return loadUsers();
     }
     if (a === "deluser") {
       const u = shownUser(d.id); if (!u) return;
       $("#dlg").close();
-      const typed = prompt(`Delete ${u.email} and everything in the account for good?\n\nCreators, recordings, videos and clips are all removed. This cannot be undone.\n\nType the email address to confirm:`);
+      const typed = prompt(`${tr("delete_account_prompt", "Delete {email} and everything in the account for good?", {email:u.email})}\n\n${tr("delete_account_note", "Creators, recordings, videos and clips are all removed. This cannot be undone.")}\n\n${tr("type_email", "Type the email address to confirm:")}`);
       if (!typed) return;
       await send(`/api/admin/users/${encodeURIComponent(d.id)}/delete`, {confirm: typed});
-      toast("Account deleted", "ok"); await load(); return loadUsers();
+      toast(tr("account_deleted", "Account deleted"), "ok"); await load(); return loadUsers();
     }
     if (a === "logout") { await fetch("/api/auth/logout", {method:"POST"}); location.href = "/"; return; }
   } catch (err) { toast(err.message, "bad"); }

@@ -1,6 +1,7 @@
 """Stage 6B.2 UI locale persistence, fallback and runtime asset provenance."""
 import hashlib
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -54,6 +55,65 @@ digest = hashlib.sha256((ROOT / "web" / "index.html").read_bytes()).hexdigest()
 check("runtime page points at the repository web directory", server.WEB.resolve() == (ROOT / "web").resolve())
 check("runtime page exposes exact UI SHA", response.headers.get("x-peakcut-ui-sha256") == digest)
 check("runtime app page is not stored in browser caches", response.headers.get("cache-control") == "private, no-store")
+
+# The dictionary alone is not coverage evidence: every literal key used by the
+# app must exist, and the Russian path must not silently render its English
+# fallback for the normal user-facing controls.
+ru_start = HTML.index("const RU = {")
+ru_end = HTML.index("};", ru_start) + 2
+assign_start = HTML.index("Object.assign(RU, {", ru_end)
+assign_end = HTML.index("});", assign_start) + 3
+dictionary_text = HTML[ru_start:ru_end] + HTML[assign_start:assign_end]
+translation_keys = set(re.findall(r'"([^"\\]+)"\s*:', dictionary_text))
+literal_calls = re.findall(r'\btr\(\s*"([^"\\]+)"', HTML)
+missing_keys = sorted(set(literal_calls) - translation_keys)
+check("all literal tr() keys exist in the Russian dictionary", not missing_keys)
+if missing_keys:
+    print("  missing:", ", ".join(missing_keys))
+
+required_sections = {
+    "home": ["home.hero_title", "nav.home"],
+    "library": ["nav.videos", "library.no_videos"],
+    "upload": ["add.make_clips", "add.video_link"],
+    "live": ["live.find_streamers", "live.start_clipping"],
+    "campaigns": ["nav.campaigns", "campaign.setup_title"],
+    "schedule": ["nav.schedule", "schedule.add_to_schedule"],
+    "styles": ["nav.styles", "styles.new_style"],
+    "ai": ["nav.ai", "ai.get_key"],
+    "cinematic": ["nav.cinematic", "cinematic.create"],
+    "settings": ["nav.settings", "settings.language"],
+    "auth": ["Create your account", "Sign in to PeakCut"],
+}
+for section, keys in required_sections.items():
+    if section == "auth":
+        auth_text = (ROOT / "web" / "auth.html").read_text(encoding="utf-8")
+        check("authentication screen has RU/EN locale helper", 'localStorage.getItem("peakcut_ui_locale")' in auth_text and 'const tr = (en, ru)' in auth_text)
+        continue
+    check(f"{section} has translated section keys", all(k in translation_keys for k in keys))
+
+fallback_allowlist = {
+    "common.seconds", "common.video", "common.open", "common.cancel",
+    # Provider/platform names and the Content ID product label are intentionally
+    # preserved; they are not interface-language prose.
+    "campaign.content_rewards", "cinematic.aura_phonk", "cinematic.content_id",
+    "cinematic.phonk_value", "cinematic.placeholder_platforms",
+}
+same_fallbacks = []
+for key, fallback in re.findall(r'\btr\(\s*"([^"\\]+)"\s*,\s*"([^"\\]*)"', HTML):
+    if key in translation_keys and not any("\u0400" <= ch <= "\u04ff" for ch in fallback):
+        # Extract the last declared value for this key; duplicate declarations
+        # are allowed for compatibility with the Stage 6B.2 dictionary merge.
+        values = re.findall(r'"' + re.escape(key) + r'"\s*:\s*"([^"]*)"', dictionary_text)
+        if values and values[-1] == fallback and key not in fallback_allowlist:
+            same_fallbacks.append(key)
+check("Russian UI calls do not use English fallbacks", not same_fallbacks)
+if same_fallbacks:
+    print("  English fallbacks:", ", ".join(sorted(set(same_fallbacks))))
+check("Russian plural helper covers 1/2-4/11-14 forms", "function ruPlural" in HTML and "x >= 11 && x <= 14" in HTML and "y >= 2 && y <= 4" in HTML)
+
+for asset in ("auth.html", "reset.html", "admin.html"):
+    asset_text = (ROOT / "web" / asset).read_text(encoding="utf-8")
+    check(f"{asset} keeps the selected interface locale", 'localStorage.getItem("peakcut_ui_locale")' in asset_text)
 
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

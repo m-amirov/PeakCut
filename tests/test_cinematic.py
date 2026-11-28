@@ -185,7 +185,27 @@ mix_opts = cinematic.normalize_options({"duration": 15, "music_source": "library
                                         "keep_original_dialogue": True, "audio_ducking": True, "effects_intensity": "light"})
 mix_plan = cinematic.make_plan(source, cinematic.validate_video(source), scenes, mix_opts, selected, analysis1, reason, [])
 mix_out = work / "dialogue-ducked.mp4"
+# This fixture contains synthetic tones, not speech. Supply explicit synthetic
+# word stamps to exercise the retained-dialogue contract without any ASR model.
+# The legacy planner does not annotate music phases, so mark the fixture's
+# first segment as a key phase. Production jobs obtain phases from the planner.
+try:
+    cinematic.render_plan(source, Path(selected["path"]), mix_plan, mix_opts, mix_out)
+except ValueError as exc:
+    check("dialogue mix without retained speech is rejected", "No retained dialogue" in str(exc))
+else:
+    check("dialogue mix without retained speech is rejected", False)
+first = mix_plan["segments"][0]
+first["music_phase"] = "hook"
+fixture_words = [{"w": "fixture", "s": float(first["source_in"]) + 0.35,
+                  "e": float(first["source_in"]) + 0.85}]
+mix_job_dir = work / "dialogue-mix-fixture"
+mix_job_dir.mkdir()
+mix_caption = cinematic.prepare_captions({"dir": str(mix_job_dir)}, source, mix_plan, mix_opts,
+                                        existing_words=fixture_words)
+check("dialogue fixture has retained speech timestamps", mix_caption["retained_dialogue_words"] > 0)
 mix_metrics = cinematic.render_plan(source, Path(selected["path"]), mix_plan, mix_opts, mix_out)
+check("dialogue mix has full-length audio", abs(mix_metrics["audio_stream_duration"] - mix_plan["total_duration"]) <= cinematic.DURATION_TOLERANCE)
 check("music plus original dialogue renders with ducking", mix_out.is_file() and mix_metrics["audio"])
 subprocess.run(["ffmpeg", "-v", "error", "-i", str(mix_out), "-f", "null", "-"], check=True)
 check("dialogue mix full decode succeeds", True)

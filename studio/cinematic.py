@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import threading
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -23,6 +24,7 @@ import numpy as np
 import soundfile as sf
 
 from . import config, ctx, media
+from . import cinematic_contract
 
 
 ANALYZER_VERSION = "cinematic-audio-1"
@@ -212,7 +214,10 @@ def _probe(path: Path) -> dict:
     return {"duration": duration, "has_video": bool(video), "has_audio": bool(audio),
             "width": int(video.get("width") or 0) if video else 0,
             "height": int(video.get("height") or 0) if video else 0,
-            "audio_codec": audio.get("codec_name", "") if audio else ""}
+            "audio_codec": audio.get("codec_name", "") if audio else "",
+            "video_duration": cinematic_contract.stream_duration(video),
+            "audio_duration": cinematic_contract.stream_duration(audio),
+            "sample_aspect_ratio": video.get("sample_aspect_ratio") if video else None}
 
 
 def normalize_options(options: dict | None) -> dict:
@@ -1455,12 +1460,10 @@ def _make_semantic_plan(source: Path, source_info: dict, scenes: list[dict], eve
         marker = boundary_refs[index]
         event_id = next((event["id"] for event in arc if shot["id"] in (event.get("shot_ids") or [])), "")
         event = next((event for event in arc if event["id"] == event_id), {})
-        focus_x = float(event.get("reframe_center_x") or shot.get("reframe_center_x") or 0.5)
-        focus_y = float(event.get("reframe_center_y") or shot.get("reframe_center_y") or 0.5)
-        if options.get("edit_mode") != "character_edit":
-            focus_x = float(shot.get("reframe_center_x") or focus_x)
-            focus_y = float(shot.get("reframe_center_y") or focus_y)
-        face_box = shot.get("face_box") or event.get("face_box")
+        # Never inherit the face position of a different shot in the event.
+        focus_x = float(shot["reframe_center_x"]) if shot.get("reframe_center_x") is not None else 0.5
+        focus_y = float(shot["reframe_center_y"]) if shot.get("reframe_center_y") is not None else 0.5
+        face_box = shot.get("face_box")
         crop_mode = "face_or_person" if options["smart_reframe"] and (shot.get("face_detected") or face_box) else "letterbox_safe"
         ai_rec = recommendations.get(event_id, {}) if semantic_status in {"ai_semantic", "ai_character"} else {}
         segments.append({"source_id": shot["id"], "event_id": event_id, "source_in": round(source_in, 3), "source_out": round(source_out, 3),
@@ -2010,11 +2013,15 @@ def _audio_samples(path: Path, start: float = 0.0, duration: float | None = None
     return np.frombuffer(raw, dtype=np.float32)
 
 
-def verify_rendered_music(output: Path, music_path: Path, music_start: float, duration: float) -> dict:
+def verify_rendered_music(output: Path, music_path: Path, music_start: float, duration: float, rendered_start: float = 0.0) -> dict:
     """Confirm that the selected track's decoded spectrum is present in the result."""
     selected = _audio_samples(music_path, music_start, duration)
-    rendered = _audio_samples(output, 0.0, duration)
+    rendered = _audio_samples(output, rendered_start, duration)
     sample_count = min(len(selected), len(rendered))
+    if duration - sample_count / 8000 > 0.12:
+        return {"status": "incomplete_audio", "selected_sha256": _sha256(music_path),
+                "checked_seconds": round(sample_count / 8000, 3), "expected_seconds": round(duration, 3),
+                "matched_fraction": 0.0}
     if sample_count < 8000:
         return {"status": "not_enough_audio", "selected_sha256": _sha256(music_path), "matched_fraction": 0.0}
     selected, rendered = selected[:sample_count], rendered[:sample_count]
@@ -2054,22 +2061,79 @@ def _segment_dialogue_windows(plan: dict, segment: dict, segment_index: int, spe
             end = (float(window["source_e"]) - source_in) / speed
         except (KeyError, TypeError, ValueError):
             continue
-        start, end = max(0.0, start - 0.04), min(duration, end + 0.04)
+        start, end = max(0.0, start), min(duration, end)
         if end - start >= 0.02:
             out.append((start, end))
-    return out
+    return cinematic_contract.merge_speech_windows(out, duration)
 
 
 def _music_filter(plan: dict, options: dict, music_index: int, planned_duration: float) -> str:
     dialogue = plan.get("retained_dialogue_timeline") or {}
     delay = float(dialogue.get("music_start_after_intro") or 0.0) if options.get("audio_mode") == "dialogue_intro_music" else 0.0
     delay = max(0.0, min(planned_duration, delay))
-    chain = f"[{music_index}:a]asetpts=PTS-STARTPTS,apad=pad_dur={planned_duration:.3f},atrim=duration={planned_duration:.3f}"
+    # The music contract already requires enough source samples. Do not pad
+    # music to conceal missing content; only the planned intro delay is silence.
+    chain = f"[{music_index}:a]{cinematic_contract.canonical_audio()},atrim=duration={planned_duration:.3f}"
     if delay > 0.0:
         delay_ms = int(round(delay * 1000))
-        chain += f",adelay={delay_ms}|{delay_ms},atrim=duration={planned_duration:.3f}"
-    chain += f",afade=t=in:st={delay:.3f}:d={min(0.35, max(0.01, planned_duration - delay)):.3f},afade=t=out:st={max(0.0, planned_duration - 0.5):.3f}:d=0.5,loudnorm=I=-14:TP=-1.0:print_format=none[music]"
+        chain += f",adelay={delay_ms}:all=1,atrim=duration={planned_duration:.3f}"
+    chain += (f",afade=t=in:st={delay:.3f}:d={min(0.35, max(0.01, planned_duration - delay)):.3f},"
+              f"afade=t=out:st={max(0.0, planned_duration - 0.5):.3f}:d=0.5,"
+              f"{cinematic_contract.normalized_audio()}[music]")
     return chain
+
+
+def _sample_segment_crop(source: Path, segment: dict, info: dict, cancel=None):
+    """Require unambiguous single-face evidence at three positions in the shot.
+
+    This is conservative sampled containment, not character identification or
+    continuous tracking. A missed/ambiguous detection keeps the full frame.
+    """
+    if info.get("sample_aspect_ratio") not in ("1:1", "0:1", None, "N/A"):
+        return None, "non-square-pixel source"
+    try:
+        import cv2
+        cascade = cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"))
+        if cascade.empty():
+            return None, "face detector unavailable"
+    except Exception:
+        return None, "face detector unavailable"
+    a, b = float(segment["source_in"]), float(segment["source_out"])
+    boxes = []
+    with tempfile.TemporaryDirectory(prefix="ce-crop-", dir=config.TMP_DIR) as tmp:
+        for index, fraction in enumerate((0.08, 0.5, 0.92)):
+            if cancel and cancel():
+                raise Cancelled()
+            frame = Path(tmp) / f"{index}.jpg"
+            try:
+                media.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{a+(b-a)*fraction:.6f}",
+                           "-i", str(source), "-frames:v", "1", "-vf", "scale=640:-2",
+                           "-q:v", "3", str(frame)], timeout=30)
+                gray = cv2.imread(str(frame), cv2.IMREAD_GRAYSCALE)
+                if gray is None:
+                    return None, "missing sampled frame"
+                faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(24, 24))
+                if len(faces) != 1:
+                    return None, "missing or ambiguous face"
+                x, y, w, h = map(int, faces[0])
+                ih, iw = gray.shape[:2]
+                boxes.append({"x": x/iw, "y": y/ih, "w": w/iw, "h": h/ih})
+            except Cancelled:
+                raise
+            except Exception:
+                return None, "sampled face analysis failed"
+    center = cinematic_contract.safe_face_center(boxes, info["width"], info["height"])
+    return center, "sampled face containment" if center else "face movement or size exceeds safe crop"
+
+
+def _require_dialogue_and_captions(plan: dict, options: dict, captions_ass: Path | None):
+    mode = options.get("audio_mode")
+    dialogue = plan.get("retained_dialogue_timeline") or {}
+    if mode in {"dialogue_intro_music", "music_key_dialogue"} and (not dialogue.get("words") or not dialogue.get("windows")):
+        raise ValueError("No retained dialogue was found. Choose another focus or explicitly select Music Only.")
+    if mode != "music_only" and options.get("caption_mode") != "off":
+        if not dialogue.get("words") or not cinematic_contract.ass_dialogue_count(captions_ass):
+            raise ValueError("Requested subtitles are missing: no recognized dialogue or ASS Dialogue events.")
 
 
 def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict, output: Path,
@@ -2087,7 +2151,9 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
     options = normalize_options(options)
     if options.get("audio_mode") == "original_audio":
         music_path = None
-    source_has_audio = bool(_probe(source).get("has_audio"))
+    source_info = _probe(source)
+    source_has_audio = bool(source_info.get("has_audio"))
+    _require_dialogue_and_captions(plan, options, captions_ass)
     planned_duration = float(plan.get("total_duration") or 0)
     cmd = ["ffmpeg", "-y", "-v", "error"]
     for seg in segments:
@@ -2098,6 +2164,7 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
         # a short track.  The plan owns the effective output duration.
         cmd += ["-ss", f"{float(plan.get('music_offset') or 0):.3f}", "-i", str(music_path)]
     filters, video_labels, audio_labels = [], [], []
+    crop_diagnostics = []
     grading = {"dramatic": (1.08, 0.94, -0.015), "dark_cinematic": (1.12, 0.82, -0.05), "emotional": (1.03, 0.92, 0.01),
                "epic": (1.10, 1.10, 0.0), "natural_film": (1.02, 1.0, 0.0), "phonk": (1.15, 1.16, -0.01)}[options["atmosphere"]]
     for i, seg in enumerate(segments):
@@ -2116,18 +2183,28 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
         center_x = float(crop_meta.get("center_x") or 0.5)
         center_y = float(crop_meta.get("center_y") or 0.5)
         safe_letterbox = crop_meta.get("mode") == "letterbox_safe"
+        crop_reason = "saved full-frame composition" if safe_letterbox else "manual crop"
+        if options["smart_reframe"] and not safe_letterbox:
+            sampled_center, crop_reason = _sample_segment_crop(source, seg, source_info, cancel=cancel)
+            safe_letterbox = sampled_center is None
+            if sampled_center is not None:
+                center_x, center_y = sampled_center
+                # The containment proof does not cover dynamic zoom or drift.
+                scale = "scale=1080:1920:force_original_aspect_ratio=increase:force_divisible_by=2:flags=lanczos"
         if safe_letterbox:
-            scale = "scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos"
+            scale = "scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos"
             crop = "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black"
-        elif options["dynamic_zoom"]:
-            crop = f"crop=1080:1920:(in_w-out_w)*{center_x:.4f}+(in_w-out_w)*0.04*sin(t*0.7):(in_h-out_h)*{center_y:.4f}+(in_h-out_h)*0.03*cos(t*0.5)"
         else:
-            crop = f"crop=1080:1920:(in_w-out_w)*{center_x:.4f}:(in_h-out_h)*{center_y:.4f}"
+            crop = cinematic_contract.crop_filter(center_x, center_y)
+        crop_diagnostics.append({"source_id": seg.get("source_id"), "mode": "letterbox_safe" if safe_letterbox else "crop",
+                                 "reason": crop_reason, "center_x": center_x, "center_y": center_y})
         eq = f"eq=contrast={grading[0]:.3f}:saturation={grading[1]:.3f}:brightness={grading[2]:.3f}" if options["color_grading"] else "null"
         filters.append(f"[{i}:v]setpts=PTS/{speed:.5f},fps={FPS},{scale},{crop},{eq},setsar=1[v{i}]")
         video_labels.append((f"v{i}", float(seg["timeline_out"]) - float(seg["timeline_in"])))
         retain_audio = options.get("audio_mode") in {"dialogue_intro_music", "music_key_dialogue", "original_audio"} or options["keep_original_dialogue"]
         if retain_audio and source_has_audio:
+            audio_format = cinematic_contract.canonical_audio()
+            fit_segment = cinematic_contract.fit_audio_segment(clip_duration)
             intro_silence = ",volume=0" if options.get("audio_mode") == "dialogue_intro_music" and i > 0 else ""
             windows = _segment_dialogue_windows(plan, seg, i, speed)
             if windows and not (plan.get("retained_dialogue_timeline") or {}).get("all_source_audio"):
@@ -2135,19 +2212,20 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
                 for wi, (start, end) in enumerate(windows):
                     label = f"dw{i}_{wi}"
                     delay_ms = max(0, int(round(start * 1000)))
-                    filters.append(f"[{i}:a]asetpts=PTS-STARTPTS,atempo={1.0 / speed:.5f},atrim=start={start:.3f}:end={end:.3f},"
-                                  f"asetpts=PTS-STARTPTS,adelay={delay_ms}|{delay_ms}[{label}]")
+                    filters.append(f"[{i}:a]{audio_format},atempo={speed:.5f},asetpts=N/SR/TB,"
+                                  f"atrim=start={start:.3f}:end={end:.3f},"
+                                  f"asetpts=N/SR/TB,adelay={delay_ms}:all=1[{label}]")
                     window_labels.append(label)
                 mix = window_labels[0]
                 if len(window_labels) > 1:
                     mix = f"dm{i}"
                     filters.append("".join(f"[{label}]" for label in window_labels) +
-                                  f"amix=inputs={len(window_labels)}:duration=longest:dropout_transition=0[{mix}]")
-                filters.append(f"[{mix}]apad=pad_dur={max(0.01, clip_duration):.3f},atrim=duration={clip_duration:.3f}{intro_silence}[a{i}]")
+                                  f"amix=inputs={len(window_labels)}:duration=longest:dropout_transition=0:normalize=0[{mix}]")
+                filters.append(f"[{mix}]{audio_format},{fit_segment}{intro_silence}[a{i}]")
             elif (plan.get("retained_dialogue_timeline") or {}).get("selection") in {"none", "intro_segment_only", "key_music_phases_only"}:
-                filters.append(f"anullsrc=r=44100:cl=stereo,atrim=duration={clip_duration:.3f}{intro_silence}[a{i}]")
+                filters.append(f"anullsrc=r=48000:cl=stereo,{audio_format},{fit_segment}{intro_silence}[a{i}]")
             else:
-                filters.append(f"[{i}:a]asetpts=PTS-STARTPTS,atempo={1.0 / speed:.5f}{intro_silence}[a{i}]")
+                filters.append(f"[{i}:a]{audio_format},atempo={speed:.5f},asetpts=N/SR/TB,{fit_segment}{intro_silence}[a{i}]")
             audio_labels.append((f"a{i}", float(seg["timeline_out"]) - float(seg["timeline_in"])))
     current = video_labels[0][0]
     accumulated = video_labels[0][1]
@@ -2180,13 +2258,14 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
         if music_path:
             filters.append(_music_filter(plan, options, music_index, planned_duration))
             if options["audio_ducking"]:
-                filters.append(f"[music][{audio}]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=250[duck]")
-                filters.append(f"[duck][{audio}]amix=inputs=2:duration=longest:dropout_transition=0,loudnorm=I=-14:TP=-1.0:print_format=none[aout]")
+                filters.append(f"[{audio}]asplit=2[voice_sidechain][voice_mix]")
+                filters.append("[music][voice_sidechain]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=250[duck]")
+                filters.append("[duck][voice_mix]amix=inputs=2:duration=longest:dropout_transition=0," + cinematic_contract.normalized_audio() + "[aout]")
             else:
-                filters.append(f"[music][{audio}]amix=inputs=2:duration=longest:dropout_transition=0,loudnorm=I=-14:TP=-1.0:print_format=none[aout]")
+                filters.append(f"[music][{audio}]amix=inputs=2:duration=longest:dropout_transition=0,{cinematic_contract.normalized_audio()}[aout]")
             audio = "aout"
         else:
-            filters.append(f"[{audio}]loudnorm=I=-14:TP=-1.0:print_format=none[aout]")
+            filters.append(f"[{audio}]{cinematic_contract.normalized_audio()}[aout]")
             audio = "aout"
     elif music_path:
         filters.append(_music_filter(plan, options, music_index, planned_duration).replace("[music]", "[aout]"))
@@ -2201,6 +2280,7 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
                        "fps": FPS, "planned_duration": round(planned_duration, 3),
                        "transition_source": "edit-plan.json",
                        "output_trim": round(planned_duration, 3),
+                       "crop_diagnostics": crop_diagnostics,
                        "segments": [{"source_id": str(seg.get("source_id") or ""),
                                      "source_in": seg.get("source_in"), "source_out": seg.get("source_out"),
                                      "timeline_in": seg.get("timeline_in"), "timeline_out": seg.get("timeline_out"),
@@ -2213,7 +2293,8 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
     # render must never destroy the last successful result while it is being
     # checked.
     candidate = output.with_name(f"{output.stem}.candidate-{uuid.uuid4().hex}{output.suffix}")
-    render_output = candidate.with_name(candidate.stem + ".base.mp4") if captions_ass and captions_ass.is_file() and captions_ass.stat().st_size else candidate
+    caption_events = cinematic_contract.ass_dialogue_count(captions_ass) if options.get("caption_mode") != "off" and options.get("audio_mode") != "music_only" else 0
+    render_output = candidate.with_name(candidate.stem + ".base.mp4") if caption_events else candidate
     planned_duration = planned_duration or accumulated
     cmd += ["-t", f"{planned_duration:.3f}", "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-r", "30", "-pix_fmt", "yuv420p"]
     if audio:
@@ -2236,13 +2317,20 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
             # A deliberately short explicit track may be followed by silence, but
             # it must never be looped.  Verify the exact selected bytes for the
             # portion that can actually be present in the output.
+            music_delay = float((plan.get("retained_dialogue_timeline") or {}).get("music_start_after_intro") or 0) if options.get("audio_mode") == "dialogue_intro_music" else 0.0
             music_verification = verify_rendered_music(candidate, music_path, float(plan.get("music_offset") or 0),
-                                                       min(planned_duration, selected_duration))
+                                                       min(max(0.0, planned_duration - music_delay), selected_duration), rendered_start=music_delay)
         else:
             music_verification = None
         if music_path and music_verification.get("status") != "present":
             raise RuntimeError("The selected music could not be confirmed in the rendered audio; the edit was not published as ready.")
-        actual_duration = float(_probe(candidate).get("duration") or 0)
+        output_info = _probe(candidate)
+        actual_duration = float(output_info.get("duration") or 0)
+        if not cinematic_contract.duration_matches(output_info.get("video_duration"), planned_duration, DURATION_TOLERANCE):
+            raise RuntimeError("The video stream duration does not match the edit timeline.")
+        if audio and not cinematic_contract.duration_matches(output_info.get("audio_duration"), planned_duration, DURATION_TOLERANCE):
+            raise RuntimeError(f"The audio stream duration does not match the edit timeline: "
+                               f"actual={output_info.get('audio_duration')!r}s, planned={planned_duration:.3f}s.")
         candidate.replace(output)
     finally:
         candidate.unlink(missing_ok=True)
@@ -2252,8 +2340,10 @@ def render_plan(source: Path, music_path: Path | None, plan: dict, options: dict
             "planned_duration": round(planned_duration, 3), "actual_duration": round(actual_duration, 6),
             "width": 1080, "height": 1920,
             "fps": FPS, "audio": bool(audio), "music_verification": music_verification,
-            "captions": bool(captions_ass and captions_ass.is_file()),
-            "caption_file": str(captions_ass.name) if captions_ass and captions_ass.is_file() else "",
+            "video_stream_duration": output_info.get("video_duration"), "audio_stream_duration": output_info.get("audio_duration"),
+            "crop_diagnostics": crop_diagnostics, "caption_event_count": caption_events,
+            "captions": bool(caption_events),
+            "caption_file": str(captions_ass.name) if caption_events else "",
             "cpu_ram_vram": "NOT AVAILABLE: runtime metrics are not recorded"}
 
 
@@ -2715,6 +2805,8 @@ def quality_gate(plan: dict, output: Path, captions_timeline: Path | None = None
         checks["mp4_bytes"] = output.is_file() and output.stat().st_size > 0
         checks["vertical_geometry"] = probe.get("width") == 1080 and probe.get("height") == 1920
         checks["audio_presence"] = bool(probe.get("has_audio"))
+        checks["video_stream_duration"] = cinematic_contract.duration_matches(probe.get("video_duration"), planned_duration, DURATION_TOLERANCE)
+        checks["audio_stream_duration"] = cinematic_contract.duration_matches(probe.get("audio_duration"), planned_duration, DURATION_TOLERANCE)
         actual_duration = float(probe.get("duration") or 0)
         checks["planned_actual_duration"] = abs(actual_duration - planned_duration) <= DURATION_TOLERANCE
         checks["duration"] = checks["planned_actual_duration"]
@@ -2735,7 +2827,9 @@ def quality_gate(plan: dict, output: Path, captions_timeline: Path | None = None
     has_ass = bool(captions_ass and captions_ass.is_file())
     captions_disabled = (caption_meta.get("mode") in {None, "off"} and not has_timeline and not has_ass) or \
                         caption_meta.get("mode") == "off" or caption_meta.get("audio_mode") == "music_only"
-    checks["caption_artifacts"] = captions_disabled or bool(has_timeline and has_ass and captions_ass.stat().st_size > 0)
+    caption_data = _json_read(captions_timeline, {}) if has_timeline else {}
+    checks["caption_artifacts"] = captions_disabled or bool(has_timeline and has_ass and
+        isinstance(caption_data, dict) and caption_data.get("words") and cinematic_contract.ass_dialogue_count(captions_ass))
     for key, value in checks.items():
         if not value and key not in technical_errors:
             technical_errors.append(key)

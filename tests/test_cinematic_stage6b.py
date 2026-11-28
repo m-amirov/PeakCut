@@ -184,7 +184,10 @@ check("Music plus key dialogue captions match the selected key speech", key_capt
       key_caption["retained_dialogue_words"] == 2 and "Кульминация" in (media_dir / "key" / "captions.srt").read_text(encoding="utf-8") and
       "Случайный" not in (media_dir / "key" / "captions.srt").read_text(encoding="utf-8"))
 key_output = media_dir / "dialogue-key.mp4"
-cinematic.render_plan(dialogue_source, None, dialogue_plan, key_options, key_output, captions_ass=media_dir / "key" / "captions.ass")
+key_metrics = cinematic.render_plan(dialogue_source, None, dialogue_plan, key_options, key_output, captions_ass=media_dir / "key" / "captions.ass")
+check("key dialogue preserves the entire audio timeline at mixed source/silence rates",
+      abs(key_metrics["audio_stream_duration"] - 6.0) <= cinematic.DURATION_TOLERANCE and
+      abs(key_metrics["video_stream_duration"] - 6.0) <= cinematic.DURATION_TOLERANCE)
 key_voice = float((cinematic._audio_samples(key_output, 2.35, 0.5) ** 2).mean() ** 0.5)
 key_silence = float((cinematic._audio_samples(key_output, 4.35, 0.5) ** 2).mean() ** 0.5)
 check("Music plus key dialogue mixer retains only the selected key speech", key_voice > max(1e-5, key_silence * 3.0))
